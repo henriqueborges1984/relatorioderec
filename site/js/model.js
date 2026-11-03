@@ -51,7 +51,9 @@ export function findUnit(p, t) {
 }
 export const findVideo = (p, id) => p.videos.find(v => v.id === id) || null;
 export const findDiaria = (p, id) => p.diarias.find(d => d.id === id) || null;
-export const hasMarks = u => u.status !== 'pendente' || arquivosText(u) || (u.obs || '').trim() || u.notas.length || u.stamps.length || !!u.original;
+// editor notes, one cell each (older data kept a single text in u.obs)
+export const edNotes = u => [...(u.edNotes || []), ...((u.obs || '').trim() ? [{ id: 'obs', texto: u.obs, criadaEm: '' }] : [])].filter(e => (e.texto || '').trim());
+export const hasMarks = u => u.status !== 'pendente' || arquivosText(u) || edNotes(u).length || u.notas.length || u.stamps.length || !!u.original;
 export const unitExcerpt = (p, t) => { const v = findVideo(p, t.v); const c = v && v.cenas.find(x => x.id === t.c); if (!c) return ''; if (t.s) { const s = c.subcenas.find(x => x.id === t.s); return (s && s.descricao) || excerpt(c); } return excerpt(c); };
 export function counts(v) {
   const all = units(v).filter(u => u.status !== 'fora');

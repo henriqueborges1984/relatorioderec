@@ -1,5 +1,5 @@
 // Relatório de Set — offline cache. Bump VERSION on each release.
-const VERSION = 'rds-2.2.6';
+const VERSION = 'rds-2.2.7';
 const CORE = ['./', './index.html', './app.css', './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png',
   './js/main.js', './js/util.js', './js/store.js', './js/docx.js', './js/model.js', './js/minipdf.js', './js/reports.js', './js/voice.js', './js/media.js', './js/drive.js', './js/config.js', './js/merge.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(CORE)).then(() => self.skipWaiting())); });

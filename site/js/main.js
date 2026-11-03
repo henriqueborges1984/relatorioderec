@@ -28,7 +28,7 @@ function save(p, now) {
   clearTimeout(timers.get(p.id));
   S.dirty.add(p.id);
   const go = () => { timers.delete(p.id); store.putProject(clone(p)).catch(e => toast('Não foi possível salvar no aparelho: ' + (e?.message || e))); scheduleAutoSync(); };
-  if (now) go(); else timers.set(p.id, setTimeout(go, 400));
+  if (now) go(); else timers.set(p.id, setTimeout(go, 250));
 }
 function flushAll() { for (const [id, t] of timers) { clearTimeout(t); const p = S.projetos.find(x => x.id === id); if (p) store.putProject(clone(p)).catch(() => {}); } timers.clear(); }
 addEventListener('pagehide', flushAll);
@@ -301,7 +301,9 @@ function unitCard(p, t, o = {}) {
     </div>
     <div class="sb">
       <div class="two">${arq}
-        <div class="field ednote-field"><label for="uo-${u.id}">Observações para o editor</label><textarea class="inp" rows="1" id="uo-${u.id}" data-u="obs" placeholder="Ex.: usar o take 3 até 0:42, depois o take 5">${esc(u.obs)}</textarea></div>
+        <div class="field ednote-field"><label>Observações para o editor</label>
+          <div class="stack" style="gap:6px">${(u.edNotes || []).map((e, i) => `<div class="edcell" data-ed="${e.id}"><span class="edn mono">${i + 1}</span><textarea class="inp" rows="1" data-edt="1" aria-label="Anotação ${i + 1} para o editor" placeholder="Ex.: usar o take 3 até 0:42">${esc(e.texto)}</textarea>${S.confirm === 'ed-' + e.id ? `<button class="btn sm danger" data-act="ed-del-yes">Apagar</button>` : `<button class="iconbtn" data-act="ed-del" aria-label="Apagar anotação">${IC.x}</button>`}</div>`).join('')}</div>
+          <div><button class="btn sm" data-act="ed-add">${IC.plus}Inserir anotação</button></div></div>
       </div>
       ${isSub ? `<div class="field"><label for="ud-${u.id}">O que é esta subcena</label><input class="inp" id="ud-${u.id}" data-u="descricao" value="${esc(u.descricao || '')}" placeholder="Ex.: plano fechado do lettering"></div>` : ''}
       ${notesList(u.notas, t)}
@@ -941,6 +943,9 @@ document.addEventListener('click', async e => {
     case 'kit-save-ok': { const nome = ($('#kitName')?.value || '').trim() || 'Kit ' + (S.kits.length + 1); const itens = V().ficha.equipamentos.filter(e2 => e2.item.trim()).map(({ cat, item, qtd }) => ({ cat, item, qtd })); S.kits.push({ id: uid(), nome, itens }); await store.setMeta('kits', S.kits); S.confirm = null; S.fichaOpen = true; render(); toast(`Kit “${nome}” salvo neste aparelho.`); break; }
     case 'ficha-all-yes': { const src = V().ficha; for (const x of p.videos) { if (x === V()) continue; Object.assign(x.ficha, { data: src.data, tipo: src.tipo, local: src.local, endereco: src.endereco, geo: src.geo ? { ...src.geo } : null, equipe: src.equipe.map(e2 => ({ ...e2, id: uid() })), equipamentos: src.equipamentos.map(e2 => ({ ...e2, id: uid() })), formato: src.formato ? { ...src.formato } : null }); } if (src.data) ensureDay(p, src.data); S.confirm = null; save(p, true); render(); toast(`Ficha aplicada a ${p.videos.length - 1} vídeo(s).`); break; }
     case 'prep-all': openPrepAll(tFromEl(b)); break;
+    case 'ed-add': { const t = tFromEl(b); const u = findUnit(p, t); u.edNotes ||= []; const id = uid(); u.edNotes.push({ id, texto: '', criadaEm: nowIso(), diariaId: currentDiariaId(p, t.v) }); save(p); render(); setTimeout(() => $(`[data-ed="${id}"] textarea`)?.focus(), 30); break; }
+    case 'ed-del': { const t = tFromEl(b); const u = findUnit(p, t); const id = b.closest('[data-ed]').dataset.ed; const e2 = u.edNotes.find(x => x.id === id); if (e2 && e2.texto.trim()) { S.confirm = 'ed-' + id; render(); break; } u.edNotes = u.edNotes.filter(x => x.id !== id); save(p); render(); break; }
+    case 'ed-del-yes': { const t = tFromEl(b); const u = findUnit(p, t); const id = b.closest('[data-ed]').dataset.ed; u.edNotes = u.edNotes.filter(x => x.id !== id); S.confirm = null; save(p); render(); break; }
     case 'prep-all-ok': applyPrepAll(); break;
     case 'script-edit': { S.editScript = tFromEl(b).c; render(); setTimeout(() => $(`#se-txt-${S.editScript}`)?.focus(), 50); break; }
     case 'script-cancel': S.editScript = null; render(); break;
@@ -1059,6 +1064,7 @@ document.addEventListener('input', e => {
     save(p); return;
   }
   if (el.dataset.ev) { const d = Dd(); const i = +el.closest('.strip').dataset.i; d.plano[i][el.dataset.ev] = el.dataset.ev === 'min' ? Math.max(0, +el.value || 0) : el.value; save(p); return; }
+  if (el.dataset.edt) { const t = tFromEl(el); const u = findUnit(p, t); const e2 = (u.edNotes || []).find(x => x.id === el.closest('[data-ed]').dataset.ed); if (e2) { e2.texto = el.value; e2.editadoEm = nowIso(); if (el.value.trim()) touch(u, p, t.v); save(p); } autoGrow(el); return; }
   if (el.dataset.prepcam) { const t = tFromEl(el); const u = findUnit(p, t); u.prep ||= {}; u.prep.planoCam ||= {}; if (!('A' in u.prep.planoCam) && u.prep.plano) u.prep.planoCam.A = u.prep.plano; u.prep.planoCam[el.dataset.prepcam] = el.value; if (el.dataset.prepcam === 'A') u.prep.plano = el.value; save(p); return; }
   if (el.dataset.prep) { const t = tFromEl(el); const u = findUnit(p, t); u.prep ||= {}; u.prep[el.dataset.prep] = el.value; if (el.dataset.prep === 'tempo') delete u.prep.pos; save(p); return; }
   if (el.dataset.u) { const t = tFromEl(el); const u = findUnit(p, t); if (u) { u[el.dataset.u] = el.value; if (el.dataset.u === 'arquivos' && el.value.trim()) touch(u, p, t.v); save(p); } autoGrow(el); }
@@ -1173,7 +1179,7 @@ async function importBackup(file) {
 }
 function normalizeProject(p) {
   p.videos ||= []; p.diarias ||= []; p.pessoas ||= []; p.funcoesExtras ||= []; p.midias ||= []; p.drive ||= {};
-  for (const v of p.videos) { v.notas ||= []; v.preambulo ||= []; for (const c of v.cenas) { c.subcenas ||= []; c.complementos ||= []; for (const u of [c, ...c.subcenas]) { u.stamps ||= []; u.notas ||= []; u.prep ||= {}; u.diarias ||= []; } } }
+  for (const v of p.videos) { v.notas ||= []; v.preambulo ||= []; for (const c of v.cenas) { c.subcenas ||= []; c.complementos ||= []; for (const u of [c, ...c.subcenas]) { u.stamps ||= []; u.notas ||= []; u.prep ||= {}; u.diarias ||= []; u.edNotes ||= []; if ((u.obs || '').trim()) { u.edNotes.unshift({ id: 'o' + u.id, texto: u.obs, criadaEm: p.atualizadoEm || nowIso() }); u.obs = ''; } } } }
   for (const d of p.diarias) { d.equipe ||= []; d.plano ||= []; }
   if ((p.v || 2) < 3) {
     // v2 -> v3: place, team and date move from the diária to each video's recording sheet
