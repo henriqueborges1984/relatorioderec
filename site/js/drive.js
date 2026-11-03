@@ -54,7 +54,7 @@ export async function renameFile(id, name) { return call(`${API}/files/${id}?fie
 export async function upload({ name, blob, parentId, fileId, appProperties, onProgress }) {
   const mime = blob.type || 'application/octet-stream';
   const meta = fileId ? { name } : { name, parents: [parentId], ...(appProperties ? { appProperties } : {}) };
-  const fields = 'fields=id,webViewLink';
+  const fields = 'fields=id,webViewLink,version';
   if (fileId) {
     try { return await resumable(`${UP}/files/${fileId}?uploadType=resumable&${fields}`, 'PATCH', meta, blob, mime, onProgress); }
     catch (e) { if (e.code !== 'notfound') throw e; return upload({ name, blob, parentId, appProperties, onProgress }); }
@@ -84,5 +84,6 @@ export async function listProjects() {
   const r = await call(`${API}/files?q=${encodeURIComponent("appProperties has { key='rds' and value='projeto' } and trashed=false")}&fields=files(id,name,modifiedTime,appProperties)&orderBy=modifiedTime desc&pageSize=100`);
   return r.files || [];
 }
+export async function fileMeta(id) { return call(`${API}/files/${id}?fields=id,version,modifiedTime,trashed`); }
 export async function downloadJson(id) { const r = await call(`${API}/files/${id}?alt=media`, {}, true); return r.json(); }
 export const folderUrl = id => `https://drive.google.com/drive/folders/${id}`;

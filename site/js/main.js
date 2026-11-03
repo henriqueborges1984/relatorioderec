@@ -7,23 +7,26 @@ import { processPhoto, videoPoster, VideoRecorder, extFor } from './media.js';
 import * as drive from './drive.js';
 import { callSheetHtml, diariaReportHtml, projectReportHtml, callSheetPdf, diariaReportPdf, projectReportPdf, diariaText, mapsUrl, videoReportHtml, videoReportPdf, fmtFormato } from './reports.js';
 import CONFIG from './config.js';
+import { merge3, comparable } from './merge.js';
 
 /* ============================== state ============================== */
 const S = {
   projetos: [], view: 'inicio', pId: null, vId: null, dId: null,
   ptab: 'videos', dtab: null, filter: 'todas', kits: [], editScript: null,
   active: null, openScript: new Set(), openPrep: new Set(), openStamps: new Set(), confirm: null,
-  sync: { busy: false, msg: '' }, hideEmpty: false, repKind: 'relatorio'
+  sync: { busy: false, msg: '' }, dirty: new Set(), renderPending: false, hideEmpty: false, repKind: 'relatorio'
 };
 const P = () => S.projetos.find(p => p.id === S.pId) || null;
 const V = () => { const p = P(); return p ? findVideo(p, S.vId) : null; };
 const Dd = () => { const p = P(); return p ? findDiaria(p, S.dId) : null; };
 const prefs = (() => { let o = { audio: true }; try { Object.assign(o, JSON.parse(localStorage.getItem('rds-prefs') || '{}')); } catch {} return { get: k => o[k], set: (k, v) => { o[k] = v; try { localStorage.setItem('rds-prefs', JSON.stringify(o)); } catch {} } }; })();
 
+const DEVICE = (() => { try { let d = localStorage.getItem('rds-device'); if (!d) { d = uid(); localStorage.setItem('rds-device', d); } return d; } catch { return 'dev'; } })();
 const timers = new Map();
 function save(p, now) {
   p.atualizadoEm = nowIso();
   clearTimeout(timers.get(p.id));
+  S.dirty.add(p.id);
   const go = () => { timers.delete(p.id); store.putProject(clone(p)).catch(e => toast('Não foi possível salvar no aparelho: ' + (e?.message || e))); scheduleAutoSync(); };
   if (now) go(); else timers.set(p.id, setTimeout(go, 400));
 }
@@ -64,9 +67,9 @@ addEventListener('hashchange', route);
 function pendingCount(p) {
   if (!p) return 0;
   let n = 0;
-  for (const nt of allNotes(p)) if (nt.audioId && !nt.driveId) n++;
-  for (const m of p.midias) if (!m.driveId) n++;
-  if (!p.drive?.syncedAt || p.atualizadoEm > p.drive.syncedAt) n++;
+  for (const nt of allNotes(p)) if (nt.audioId && !nt.driveId && (!nt.dev || nt.dev === DEVICE)) n++;
+  for (const m of p.midias) if (!m.driveId && m.blobId && (!m.dev || m.dev === DEVICE)) n++;
+  if (S.dirty.has(p.id)) n++;
   return n;
 }
 function syncChip() {
@@ -426,7 +429,7 @@ function renderConfig() {
     </div>
     <div class="panel stack"><h3>Armazenamento neste aparelho</h3><div class="muted" style="font-size:13.5px" id="storeInfo">Calculando…</div>
       <div class="row"><button class="btn" data-act="free-space">Liberar espaço (mídias já enviadas ao Drive)</button><button class="btn" data-act="import-backup">${IC.upload}Importar backup</button></div></div>
-    <div class="muted" style="font-size:12px">Relatório de Set · versão 2.1</div>
+    <div class="muted" style="font-size:12px">Relatório de Set · versão 2.2</div>
   </section>`;
   if (navigator.storage?.estimate) navigator.storage.estimate().then(e => { const el = $('#storeInfo'); if (el) el.textContent = `Usando ${fmtBytes(e.usage || 0)} de ${fmtBytes(e.quota || 0)} disponíveis no navegador.`; }).catch(() => {});
 }
@@ -445,7 +448,7 @@ function renderDock() {
 }
 
 /* ============================== sheets ============================== */
-const sheet = { open(html, onClose) { this.onClose = onClose; document.body.style.overflow = 'hidden'; $('#sheetRoot').innerHTML = `<div class="scrim" data-scrim="1"><div class="sheet" role="dialog">${html}</div></div>`; }, close() { const f = this.onClose; this.onClose = null; $('#sheetRoot').innerHTML = ''; document.body.style.overflow = ''; f && f(); }, get isOpen() { return !!$('#sheetRoot').innerHTML; } };
+const sheet = { open(html, onClose) { this.onClose = onClose; document.body.style.overflow = 'hidden'; $('#sheetRoot').innerHTML = `<div class="scrim" data-scrim="1"><div class="sheet" role="dialog">${html}</div></div>`; }, close() { const f = this.onClose; this.onClose = null; $('#sheetRoot').innerHTML = ''; document.body.style.overflow = ''; f && f(); if (S.renderPending) setTimeout(renderSoon, 50); }, get isOpen() { return !!$('#sheetRoot').innerHTML; } };
 
 function targetOptions(p, sel, scopeVideo) {
   const d = S.view === 'diaria' ? Dd() : null;
@@ -526,7 +529,7 @@ async function stopRecording(cancel) {
   let tgt = recState.target, msg = '';
   if (res.text && !recState.manual) { const r = resolveSpoken(p, res.text, tgt); if (r) { msg = r.msg; if (r.t) tgt = r.t; } }
   if (!tgt) tgt = { v: p.videos[0].id, c: null, s: null };
-  const note = { id: uid(), criadaEm: new Date(recState.t0).toISOString(), diariaId: currentDiariaId(p, tgt.v), duracaoMs: res.durationMs, texto: res.text, rascunho: res.text, audioId, mime: res.mime || '', transcricao: res.text ? 'navegador' : 'pendente' };
+  const note = { id: uid(), criadaEm: new Date(recState.t0).toISOString(), diariaId: currentDiariaId(p, tgt.v), duracaoMs: res.durationMs, texto: res.text, rascunho: res.text, audioId, mime: res.mime || '', transcricao: res.text ? 'navegador' : 'pendente', dev: DEVICE };
   const host = noteHost(p, tgt); host.notas.push(note);
   if (tgt.c) { if (host.status === 'pendente') host.status = 'gravada'; touch(host, p, tgt.v); S.active = tgt; }
   save(p, true);
@@ -640,7 +643,7 @@ async function addMediaFiles(files) {
 async function saveMedia(p, t, tipo, blob, info) {
   const id = uid(), blobId = 'm_' + id;
   await store.putBlob(blobId, blob);
-  const m = { id, tipo, mime: blob.type || (tipo === 'foto' ? 'image/jpeg' : 'video/webm'), criadaEm: nowIso(), legenda: '', v: t.v || null, c: t.c || null, s: t.s || null, diariaId: currentDiariaId(p, t.v), blobId, thumb: info.thumb || '', tw: info.tw || 0, th: info.th || 0, size: blob.size, dur: info.dur || 0 };
+  const m = { id, tipo, mime: blob.type || (tipo === 'foto' ? 'image/jpeg' : 'video/webm'), criadaEm: nowIso(), legenda: '', v: t.v || null, c: t.c || null, s: t.s || null, diariaId: currentDiariaId(p, t.v), blobId, thumb: info.thumb || '', tw: info.tw || 0, th: info.th || 0, size: blob.size, dur: info.dur || 0, dev: DEVICE };
   p.midias.push(m);
   if (t.c) { const u = findUnit(p, t); if (u) touch(u, p, t.v); }
   save(p, true); render();
@@ -745,7 +748,64 @@ document.addEventListener('pointerup', endDrag); document.addEventListener('poin
 
 /* ============================== Drive sync ============================== */
 let autoT = null;
-function scheduleAutoSync(ms = 30000) { clearTimeout(autoT); if (!drive.driveConnected() || !navigator.onLine) return; autoT = setTimeout(() => { if (!S.sync.busy && drive.driveConnected()) syncProject(P(), false); }, ms); }
+let fullT = null;
+function scheduleAutoSync(ms = 3000) {
+  clearTimeout(autoT); if (!drive.driveConnected() || !navigator.onLine) return;
+  autoT = setTimeout(() => { const p = P(); if (p && !S.sync.busy && drive.driveConnected()) syncData(p); }, ms);
+  clearTimeout(fullT); fullT = setTimeout(() => { const p = P(); if (p && !S.sync.busy && drive.driveConnected() && pendingCount(p) > (S.dirty.has(p.id) ? 1 : 0)) syncProject(p, false); }, 90000);
+}
+/* ---------- live data sync between devices (project JSON on Drive, merged 3-way) ---------- */
+let dataBusy = false;
+function applyInPlace(p, m) { for (const k of Object.keys(p)) if (!(k in m)) delete p[k]; Object.assign(p, m); }
+function renderSoon() {
+  const ae = document.activeElement;
+  const typing = ae && ae.closest && (ae.closest('#app') || ae.closest('#sheetRoot')) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName);
+  if (typing || sheet.isOpen || recState || drag) { S.renderPending = true; return; }
+  S.renderPending = false; render();
+}
+document.addEventListener('focusout', () => setTimeout(() => { if (S.renderPending) renderSoon(); }, 300));
+async function syncData(p, interactive = false) {
+  if (!p || dataBusy || !drive.driveConfigured() || !navigator.onLine) return false;
+  if (!drive.driveConnected()) { if (!interactive) return false; try { await drive.connect(true); } catch (e) { toast(e.message); return false; } }
+  if (!p.drive?.folderId || !p.drive?.files?.dados) { if (!S.sync.busy) syncProject(p, interactive); return false; }
+  dataBusy = true; let changed = false;
+  try {
+    const before = comparable(p);
+    const meta = await drive.fileMeta(p.drive.files.dados);
+    if (meta.trashed) throw Object.assign(new Error('gone'), { code: 'notfound' });
+    const ver = await store.getMeta('ver:' + p.id);
+    let base = await store.getMeta('base:' + p.id);
+    let remoteState = base;
+    if (String(meta.version) !== String(ver)) {
+      const remote = (await drive.downloadJson(p.drive.files.dados))?.projeto;
+      if (remote?.id === p.id) {
+        normalizeProject(remote); remoteState = remote;
+        const merged = merge3(base ? normalizeProject(base) : undefined, JSON.parse(JSON.stringify(p)), remote);
+        applyInPlace(p, merged); normalizeProject(p);
+        changed = comparable(p) !== before;
+      }
+    }
+    let version = meta.version;
+    if (!remoteState || comparable(p) !== comparable(remoteState)) {
+      p.drive.syncedAt = nowIso();
+      const data = new Blob([JSON.stringify({ formato: 'relatorio-de-set', versao: 3, projeto: p })], { type: 'application/json' });
+      const r = await drive.upload({ name: `${projName(p)} – dados do app.json`, blob: data, parentId: p.drive.folderId, fileId: p.drive.files.dados, appProperties: { rds: 'projeto', pid: p.id } });
+      p.drive.files.dados = r.id; version = r.version ?? (await drive.fileMeta(r.id)).version;
+    }
+    await store.setMeta('base:' + p.id, JSON.parse(JSON.stringify(p)));
+    await store.setMeta('ver:' + p.id, String(version));
+    await store.putProject(clone(p));
+    S.dirty.delete(p.id);
+    if (changed) { renderSoon(); toast('Atualizado com alterações de outro aparelho.', 2500); } else setTopChip();
+    return true;
+  } catch (e) {
+    if (e.code === 'notfound' && p.drive?.files) { p.drive.files.dados = null; }
+    else if (e.code !== 'auth') console.warn('sync', e);
+    setTopChip(); return false;
+  } finally { dataBusy = false; }
+}
+setInterval(() => { const p = P(); if (p && document.visibilityState === 'visible' && navigator.onLine && drive.driveConnected() && !S.sync.busy) syncData(p); }, 20000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { const p = P(); if (p && drive.driveConnected()) syncData(p); } });
 const noteFileName = (p, v, u, n) => `${slug(videoCode(p, v))}_${u ? 'cena-' + u.numero : 'geral'}_${ymdOf(n.criadaEm)}_${hhmm(n.criadaEm).replace(':', 'h')}.${extFor(n.mime || 'audio/webm')}`;
 async function syncProject(p, interactive = true) {
   if (!p || S.sync.busy) return;
@@ -791,12 +851,14 @@ async function syncProject(p, interactive = true) {
     }
     // project data (to open on another device)
     step('Salvando dados do projeto…');
-    p.drive.syncedAt = nowIso();
-    const data = new Blob([JSON.stringify({ formato: 'relatorio-de-set', versao: 2, projeto: p })], { type: 'application/json' });
-    const r = await drive.upload({ name: `${projName(p)} – dados do app.json`, blob: data, parentId: p.drive.folderId, fileId: p.drive.files.dados, appProperties: { rds: 'projeto', pid: p.id } });
-    p.drive.files.dados = r.id;
-    p.atualizadoEm = p.drive.syncedAt;
-    await store.putProject(clone(p));
+    if (!p.drive.files.dados) {
+      p.drive.syncedAt = nowIso();
+      const data = new Blob([JSON.stringify({ formato: 'relatorio-de-set', versao: 3, projeto: p })], { type: 'application/json' });
+      const r = await drive.upload({ name: `${projName(p)} – dados do app.json`, blob: data, parentId: p.drive.folderId, appProperties: { rds: 'projeto', pid: p.id } });
+      p.drive.files.dados = r.id;
+      await store.setMeta('base:' + p.id, JSON.parse(JSON.stringify(p))); await store.setMeta('ver:' + p.id, String(r.version ?? ''));
+      S.dirty.delete(p.id); await store.putProject(clone(p));
+    } else { while (dataBusy) await new Promise(r => setTimeout(r, 200)); await syncData(p); }
     toast(errors ? `Drive atualizado, mas ${errors} arquivo(s) falharam. Tente de novo.` : 'Projeto salvo no Google Drive.');
   } catch (e) {
     toast(e.message || String(e), 5000);
@@ -816,11 +878,14 @@ async function loadFromDrive(id) {
   try {
     const j = await drive.downloadJson(id);
     const rp = j?.projeto; if (!rp?.id || !Array.isArray(rp.videos)) throw new Error('Arquivo de projeto inválido.');
-    const i = S.projetos.findIndex(x => x.id === rp.id);
-    if (i > -1 && (S.projetos[i].atualizadoEm || '') > (rp.atualizadoEm || '')) { sheet.close(); toast('A versão deste aparelho é mais recente que a do Drive. Mantive a deste aparelho.', 5000); go('p-' + rp.id); return; }
     normalizeProject(rp);
-    if (i > -1) S.projetos[i] = rp; else S.projetos.push(rp);
-    await store.putProject(clone(rp)); sheet.close(); toast('Projeto carregado do Drive. Áudios e vídeos ficam no Drive e abrem pelo link.'); go('p-' + rp.id);
+    const local = S.projetos.find(x => x.id === rp.id);
+    if (local) { sheet.close(); go('p-' + rp.id); await syncData(local, true); toast('Projeto atualizado com a versão do Drive.'); return; }
+    rp.drive = { ...(rp.drive || {}), files: { ...(rp.drive?.files || {}), dados: id } };
+    S.projetos.push(rp);
+    const meta = await drive.fileMeta(id).catch(() => ({}));
+    await store.setMeta('base:' + rp.id, JSON.parse(JSON.stringify(rp))); await store.setMeta('ver:' + rp.id, String(meta.version ?? ''));
+    await store.putProject(clone(rp)); sheet.close(); toast('Projeto aberto do Drive. A partir de agora ele se atualiza sozinho entre os aparelhos.'); go('p-' + rp.id);
   } catch (e) { toast(e.message || String(e)); }
 }
 
