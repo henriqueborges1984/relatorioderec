@@ -1,7 +1,7 @@
 import { $, $$, uid, esc, cleanHtml, nowIso, clone, hhmm, todayYmd, fmtDate, weekday, mmss, slug, durTxt, fmtBytes, ymdOf, IC, STATUS, STATUS_L, STAMPS, FUNCOES, TIPOS_DIARIA, TIPO_L, EVENTOS, EVENTO_L, PLANOS, ORIENTACOES, RESOLUCOES, FPS, EQUIP_CATS, camLetter, toast } from './util.js';
 import { store, migrateV1 } from './store.js';
 import { parseDocx, excerpt, newUnit, newCena, newVideo, newFicha, suggestPrep } from './docx.js';
-import { newProject, newDiaria, projName, videoName, videoCode, videoColor, units, findUnit, findVideo, findDiaria, hasMarks, unitExcerpt, counts, planTimes, diariaLabel, unitsDoneIn, sameT, unitMin, allNotes, ensureDay, dayVideos, dayInfo, camCount, arquivosText, formatoOf, allPessoasFuncoes } from './model.js';
+import { newProject, newDiaria, projName, videoName, videoCode, videoColor, units, findUnit, findVideo, findDiaria, hasMarks, unitExcerpt, counts, planTimes, diariaLabel, unitsDoneIn, sameT, unitMin, allNotes, planoText, ensureDay, dayVideos, dayInfo, camCount, arquivosText, formatoOf, allPessoasFuncoes } from './model.js';
 import { VoiceRecorder, SR, PROB, parseCenaRef, parseVideoRef, parseArquivo, saysValendo, saysRefazer, saysDialogo, aiConfigured, transcribeBlob, getPasscode, setPasscode, spokenPunctuation } from './voice.js';
 import { processPhoto, videoPoster, VideoRecorder, extFor } from './media.js';
 import * as drive from './drive.js';
@@ -250,8 +250,9 @@ function prepFields(u, idp, applyBtn = true) {
     <div class="field"><label for="${idp}-amb">Ambiente / set</label><input class="inp" id="${idp}-amb" list="ambientes" data-prep="ambiente" value="${esc(pr.ambiente)}" placeholder="Ex.: Estúdio – fundo infinito"></div>
     <div class="field"><label for="${idp}-ie">INT / EXT</label><select class="inp" id="${idp}-ie" data-prep="intext">${opt([['', '—'], ['INT', 'Interna'], ['EXT', 'Externa']], pr.intext)}</select></div>
     <div class="field"><label for="${idp}-dn">Período</label><select class="inp" id="${idp}-dn" data-prep="periodo">${opt([['', '—'], ['DIA', 'Dia'], ['NOITE', 'Noite']], pr.periodo)}</select></div>
-    <div class="field"><label for="${idp}-pl">Plano</label><select class="inp" id="${idp}-pl" data-prep="plano"><option value="">—</option>${PLANOS.map(x => `<option ${pr.plano === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}${pr.plano && !PLANOS.includes(pr.plano) ? `<option selected>${esc(pr.plano)}</option>` : ''}</select></div>
     <div class="field"><label for="${idp}-cm">Câmeras</label><select class="inp" id="${idp}-cm" data-prep="cameras">${[1, 2, 3, 4, 5, 6].map(n => `<option value="${n}" ${camCount(u) === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+    ${camCount(u) > 1 ? Array.from({ length: camCount(u) }, (_, i) => { const L = camLetter(i); const val = pr.planoCam?.[L] ?? (i === 0 ? pr.plano : '') ?? ''; return `<div class="field"><label for="${idp}-pl${L}">Plano · Câm ${L}</label><select class="inp" id="${idp}-pl${L}" data-prepcam="${L}"><option value="">—</option>${PLANOS.map(x => `<option ${val === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}${val && !PLANOS.includes(val) ? `<option selected>${esc(val)}</option>` : ''}</select></div>`; }).join('')
+      : `<div class="field"><label for="${idp}-pl">Plano</label><select class="inp" id="${idp}-pl" data-prep="plano"><option value="">—</option>${PLANOS.map(x => `<option ${pr.plano === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}${pr.plano && !PLANOS.includes(pr.plano) ? `<option selected>${esc(pr.plano)}</option>` : ''}</select></div>`}
     <div class="field"><label for="${idp}-tm">Tempo (min)</label><input class="inp mono" id="${idp}-tm" type="number" min="0" step="5" inputmode="numeric" data-prep="tempo" value="${esc(pr.tempo)}" placeholder="20"></div>
     <div class="field"><label for="${idp}-el">Elenco</label><input class="inp" id="${idp}-el" data-prep="elenco" value="${esc(pr.elenco)}" placeholder="Apresentador…"></div>
     <div class="field"><label for="${idp}-ne">Necessidades</label><input class="inp" id="${idp}-ne" data-prep="necessidades" value="${esc(pr.necessidades)}" placeholder="Objetos, figurino…"></div>
@@ -364,7 +365,7 @@ function stripHtml(p, d, it, tm, i) {
   const stc = { pendente: 'var(--off)', gravada: 'var(--info)', valendo: 'var(--ok)', refazer: 'var(--warn)', fora: 'var(--off)' }[u.status];
   return `<div class="strip" data-i="${i}" style="--vc:${videoColor(p, v)}"><button class="grip" aria-label="Arrastar">${IC.grip}</button><span class="tm">${tm.start}</span>
     <button class="num" data-act="plan-edit" style="border:0;background:none;cursor:pointer;text-align:left;padding:0"><span class="vtag" style="font-size:9.5px">${esc(videoCode(p, v))}</span><br>${esc(u.numero)}</button>
-    <button class="info" data-act="plan-edit" style="border:0;background:none;cursor:pointer;text-align:left;padding:0"><span class="l1">${esc(pr.ambiente || 'Ambiente não definido')}${pr.intext || pr.periodo ? ' · ' + esc([pr.intext, pr.periodo].filter(Boolean).join(' ')) : ''}</span><span class="l2"><span class="st-dot" style="background:${stc}"></span>${esc([pr.plano, unitExcerpt(p, it)].filter(Boolean).join(' · '))}</span></button>
+    <button class="info" data-act="plan-edit" style="border:0;background:none;cursor:pointer;text-align:left;padding:0"><span class="l1">${esc(pr.ambiente || 'Ambiente não definido')}${pr.intext || pr.periodo ? ' · ' + esc([pr.intext, pr.periodo].filter(Boolean).join(' ')) : ''}</span><span class="l2"><span class="st-dot" style="background:${stc}"></span>${esc([planoText(u), unitExcerpt(p, it)].filter(Boolean).join(' · '))}</span></button>
     <div class="acts"><span class="mono muted" style="font-size:12px">${durTxt(tm.dur)}</span><button class="iconbtn" data-act="plan-del" aria-label="Tirar do plano">${IC.x}</button></div></div>`;
 }
 function diariaSet(p, d) {
@@ -1058,6 +1059,7 @@ document.addEventListener('input', e => {
     save(p); return;
   }
   if (el.dataset.ev) { const d = Dd(); const i = +el.closest('.strip').dataset.i; d.plano[i][el.dataset.ev] = el.dataset.ev === 'min' ? Math.max(0, +el.value || 0) : el.value; save(p); return; }
+  if (el.dataset.prepcam) { const t = tFromEl(el); const u = findUnit(p, t); u.prep ||= {}; u.prep.planoCam ||= {}; if (!('A' in u.prep.planoCam) && u.prep.plano) u.prep.planoCam.A = u.prep.plano; u.prep.planoCam[el.dataset.prepcam] = el.value; if (el.dataset.prepcam === 'A') u.prep.plano = el.value; save(p); return; }
   if (el.dataset.prep) { const t = tFromEl(el); const u = findUnit(p, t); u.prep ||= {}; u.prep[el.dataset.prep] = el.value; if (el.dataset.prep === 'tempo') delete u.prep.pos; save(p); return; }
   if (el.dataset.u) { const t = tFromEl(el); const u = findUnit(p, t); if (u) { u[el.dataset.u] = el.value; if (el.dataset.u === 'arquivos' && el.value.trim()) touch(u, p, t.v); save(p); } autoGrow(el); }
 });
@@ -1113,7 +1115,7 @@ function openPrepAll(t) {
   const p = P(); const u = findUnit(p, t); if (!u) return; prepSrc = t;
   const pr = u.prep || {};
   sheet.open(`<h3>Aplicar a preparação da cena ${esc(u.numero)}</h3>
-    <div class="field"><label>Campos a copiar</label><div class="stack" style="gap:4px">${PREP_KEYS.map(([k, l]) => `<label class="row" style="gap:8px"><input type="checkbox" name="pk" value="${k}" ${pr[k] ? 'checked' : ''}> ${l}: <b>${esc(k === 'cameras' ? String(camCount(u)) : (pr[k] || '—'))}</b></label>`).join('')}</div><span class="muted" style="font-size:12.5px">O tempo de cada cena não é copiado.</span></div>
+    <div class="field"><label>Campos a copiar</label><div class="stack" style="gap:4px">${PREP_KEYS.map(([k, l]) => `<label class="row" style="gap:8px"><input type="checkbox" name="pk" value="${k}" ${pr[k] ? 'checked' : ''}> ${l}: <b>${esc(k === 'cameras' ? String(camCount(u)) : k === 'plano' ? (planoText(u) || '—') : (pr[k] || '—'))}</b></label>`).join('')}</div><span class="muted" style="font-size:12.5px">O tempo de cada cena não é copiado.</span></div>
     <div class="field"><label>Aplicar em</label><label class="row" style="gap:8px"><input type="radio" name="pscope" value="video" checked> Todas as cenas deste vídeo</label>${p.videos.length > 1 ? `<label class="row" style="gap:8px"><input type="radio" name="pscope" value="projeto"> Todas as cenas de todos os vídeos do projeto</label>` : ''}</div>
     <div class="field"><label>Como</label><label class="row" style="gap:8px"><input type="radio" name="pmode" value="vazios" checked> Só preencher campos vazios</label><label class="row" style="gap:8px"><input type="radio" name="pmode" value="todos"> Substituir o que já estiver preenchido</label></div>
     <div class="row"><span class="spacer"></span><button class="btn" data-act="sheet-close">Cancelar</button><button class="btn primary" data-act="prep-all-ok">Aplicar</button></div>`);
@@ -1128,6 +1130,7 @@ function applyPrepAll() {
   for (const v of vids) for (const u of units(v)) {
     if (u === src) continue; u.prep ||= {}; let ch = false;
     for (const k of keys) { const val = k === 'cameras' ? String(camCount(src)) : (src.prep[k] || ''); if (!val) continue; if (all || !u.prep[k] || (k === 'cameras' && !u.prep.cameras)) { if (u.prep[k] !== val) { u.prep[k] = val; ch = true; } } }
+    if (keys.includes('plano') && src.prep.planoCam && (all || !u.prep.planoCam)) { if (JSON.stringify(u.prep.planoCam) !== JSON.stringify(src.prep.planoCam)) { u.prep.planoCam = { ...src.prep.planoCam }; ch = true; } }
     if (ch) n++;
   }
   save(p, true); sheet.close(); render(); toast(n ? `Preparação aplicada em ${n} cena${n > 1 ? 's' : ''}.` : 'Nenhuma cena precisou ser alterada.');

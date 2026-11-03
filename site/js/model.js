@@ -21,6 +21,13 @@ export function dayInfo(p, d) {
 }
 export const formatoOf = (p, v) => (v && v.ficha?.formato) || p.formato || null;
 export const camCount = u => Math.max(1, parseInt(u?.prep?.cameras, 10) || 1);
+// shot size per camera ("A: Plano médio · B: Close") when the scene uses more than one camera
+export function planoText(u, sep = ' · ') {
+  const pr = u?.prep || {}; const n = camCount(u);
+  if (n <= 1 || !pr.planoCam) return pr.plano || '';
+  const out = []; for (let i = 0; i < n; i++) { const L = camLetter(i); const v = pr.planoCam[L] || (i === 0 ? pr.plano : ''); if (v) out.push(`${L}: ${v}`); }
+  return out.join(sep);
+}
 // approved files as text (per camera when the scene uses more than one)
 export function arquivosText(u, sep = '\n') {
   const n = camCount(u);

@@ -1,7 +1,7 @@
 // Reports: on-screen HTML and PDF (call sheet, diária report, project report)
 import { esc, fmtDate, weekday, hhmm, ymdOf, durTxt, STATUS_L, STAMP_L, TIPO_L, EVENTO_L, FUNCOES, ORIENTACOES } from './util.js';
 import { MiniPdf, wrapText, textW, dataUrlToBytes } from './minipdf.js';
-import { projName, videoName, videoCode, videoColor, findUnit, findVideo, hasMarks, unitExcerpt, planTimes, diariaLabel, unitsDoneIn, sameT, units, counts, allPessoasFuncoes, dayInfo, arquivosText, formatoOf, camCount } from './model.js';
+import { projName, videoName, videoCode, videoColor, findUnit, findVideo, hasMarks, unitExcerpt, planTimes, diariaLabel, unitsDoneIn, sameT, units, counts, allPessoasFuncoes, dayInfo, arquivosText, formatoOf, camCount, planoText } from './model.js';
 
 const ORDER = FUNCOES.flatMap(g => g[1]);
 const roleRank = f => { const i = ORDER.indexOf(f); return i < 0 ? 999 : i; };
@@ -71,7 +71,7 @@ export function callSheetHtml(p, d) {
     const { v, u, code } = tLabel(p, it); if (!u) return '';
     const pr = u.prep || {};
     return `<tr><td class="mono">${tm.start}</td><td class="n"><span class="vtag" style="--vc:${videoColor(p, v)}">${esc(code)}</span>${esc(u.numero)}</td>
-      <td>${esc(pr.ambiente || '—')}<div class="muted">${esc([pr.intext, pr.periodo].filter(Boolean).join(' · '))}</div></td><td>${esc(pr.plano || '—')}${camCount(u) > 1 ? `<div class="muted">${camCount(u)} câmeras</div>` : ''}</td>
+      <td>${esc(pr.ambiente || '—')}<div class="muted">${esc([pr.intext, pr.periodo].filter(Boolean).join(' · '))}</div></td><td>${esc(planoText(u) || '—')}${camCount(u) > 1 ? `<div class="muted">${camCount(u)} câmeras</div>` : ''}</td>
       <td>${esc(unitExcerpt(p, it))}${pr.elenco ? `<div class="muted">Elenco: ${esc(pr.elenco)}</div>` : ''}${pr.necessidades ? `<div class="muted">Precisa: ${esc(pr.necessidades)}</div>` : ''}</td><td class="mono">${durTxt(tm.dur)}</td></tr>`;
   }).join('');
   const vids = [...new Set(d.plano.filter(i => i.k === 'cena').map(i => i.v))].map(id => findVideo(p, id)).filter(Boolean);
@@ -243,7 +243,7 @@ export function callSheetPdf(p, d) {
     const tm = pt.items[i];
     if (it.k === 'ev') return { span: (it.titulo || EVENTO_L[it.tipo]).toUpperCase(), lead: tm.start, tail: durTxt(tm.dur), fill: [238, 240, 236] };
     const { v, u, code } = tLabel(p, it); if (!u) return null; const pr = u.prep || {};
-    return { cells: [[{ t: tm.start, f: 'C', s: 8.6 }], [{ t: u.numero, tag: code, tagColor: hexRgb(videoColor(p, v)), raw: true }], [{ t: pr.ambiente || '—' }, ...([pr.intext, pr.periodo].filter(Boolean).length ? [{ t: [pr.intext, pr.periodo].filter(Boolean).join(' · '), c: MUTE, s: 7.6 }] : [])], [{ t: pr.plano || '—' }, ...(camCount(u) > 1 ? [{ t: camCount(u) + ' câmeras', c: MUTE, s: 7.6 }] : [])], [{ t: unitExcerpt(p, it) || '—' }, ...(pr.elenco ? [{ t: 'Elenco: ' + pr.elenco, c: MUTE, s: 7.6 }] : []), ...(pr.necessidades ? [{ t: 'Precisa: ' + pr.necessidades, c: MUTE, s: 7.6 }] : [])], [{ t: durTxt(tm.dur), f: 'C', s: 8.2 }]] };
+    return { cells: [[{ t: tm.start, f: 'C', s: 8.6 }], [{ t: u.numero, tag: code, tagColor: hexRgb(videoColor(p, v)), raw: true }], [{ t: pr.ambiente || '—' }, ...([pr.intext, pr.periodo].filter(Boolean).length ? [{ t: [pr.intext, pr.periodo].filter(Boolean).join(' · '), c: MUTE, s: 7.6 }] : [])], [{ t: planoText(u, '\n') || '—' }, ...(camCount(u) > 1 ? [{ t: camCount(u) + ' câmeras', c: MUTE, s: 7.6 }] : [])], [{ t: unitExcerpt(p, it) || '—' }, ...(pr.elenco ? [{ t: 'Elenco: ' + pr.elenco, c: MUTE, s: 7.6 }] : []), ...(pr.necessidades ? [{ t: 'Precisa: ' + pr.necessidades, c: MUTE, s: 7.6 }] : [])], [{ t: durTxt(tm.dur), f: 'C', s: 8.2 }]] };
   }).filter(Boolean);
   if (rows.length) D.table(cols, rows); else D.para('Nenhuma cena no plano.', 'HO', 9, MUTE, 12);
   D.y += 8; D.para(`Total previsto: ${durTxt(pt.total)} · término às ${pt.end}`, 'HB', 9, INK, 12);
