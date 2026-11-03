@@ -58,7 +58,7 @@ function headHtml(p, d, title) {
   return `<header class="rep-h"><div class="eyebrow">${esc(title)} · ${esc(weekday(d.data))} ${esc(fmtDate(d.data))}</div>
     <h1>${esc(projName(p))}</h1>
     <div class="kv"><span><b>Tipo:</b> ${esc(info.tipos.map(k => TIPO_L[k]).join(' / ') || '—')}</span>${info.local ? `<span><b>Local:</b> ${esc(info.local)}</span>` : ''}${info.endereco ? `<span><b>Endereço:</b> ${esc(info.endereco)}</span>` : ''}${mu ? `<span><a href="${esc(mu)}" target="_blank" rel="noopener">Abrir no mapa</a></span>` : ''}<span><b>Chegada:</b> ${esc(d.call || '—')}</span>${d.plano.length ? `<span><b>Término previsto:</b> ${pt.end}</span>` : ''}${p.formato ? `<span><b>Formato:</b> ${esc(fmtFormato(p.formato))}</span>` : ''}</div>
-    ${info.obs ? `<div style="white-space:pre-wrap;font-size:14px">${esc(info.obs)}</div>` : ''}
+    ${info.obs ? `<div class="setnote"><div class="lbl">Observações escritas no set</div>${esc(info.obs)}</div>` : ''}
     ${eq.length ? `<div class="eqgrid">${eq.map(e => `<div><span class="muted">${esc(e.funcao || '—')}</span><b>${esc(e.pessoa.nome)}</b></div>`).join('')}</div>` : ''}
     ${info.equipamentos.length ? `<div class="kv" style="font-size:13px"><b>Equipamentos:</b> ${esc(info.equipamentos.map(e => `${e.qtd > 1 ? e.qtd + '× ' : ''}${e.item}`).join(', '))}</div>` : ''}
   </header>`;
@@ -106,6 +106,7 @@ export function projectReportHtml(p, o = {}) {
     ${p.formato ? `<div class="kv"><span><b>Formato:</b> ${esc(fmtFormato(p.formato))}</span></div>` : ''}
     ${p.obs ? `<div style="white-space:pre-wrap;font-size:14px">${esc(p.obs)}</div>` : ''}</header>
     ${p.videos.map(v => { const c = counts(v); return `<section class="rep-r"><div class="rh"><span class="vtag" style="--vc:${videoColor(p, v)}">${esc(videoCode(p, v))}</span><h2>${esc(videoName(v))}</h2><span class="muted" style="font-size:13px">${esc([v.cab.versao, v.cab.duracao && 'Duração ' + v.cab.duracao, v.ficha?.data && 'Gravado em ' + fmtDate(v.ficha.data), v.ficha?.local].filter(Boolean).join(' · '))}</span><span class="spacer"></span><span class="mono" style="font-size:12.5px">${c.valendo}/${c.total} valendo</span></div>
+      ${v.ficha?.obs ? `<div class="setnote"><div class="lbl">Observações escritas no set</div>${esc(v.ficha.obs)}</div>` : ''}
       <div class="rtab"><table><thead><tr><th>Cena</th><th>Status</th><th>Arquivo aprovado</th><th>Observações, notas e mídias</th></tr></thead><tbody>
       ${v.cenas.flatMap(cn => [{ v: v.id, c: cn.id, s: null }, ...cn.subcenas.map(s => ({ v: v.id, c: cn.id, s: s.id }))]).filter(t => !o.hideEmpty || hasMarks(findUnit(p, t))).map(t => unitRow(p, t, o)).join('')}
       </tbody></table></div>
@@ -161,6 +162,23 @@ class Doc {
     }
     this.onPage = prev;
   }
+  // highlighted box for notes written on set
+  setNote(text) {
+    const PAD = 9, LH = 13, size = 9.6, W = this.W - 2 * this.M;
+    const lines = wrapText(text, 'H', size, W - 2 * PAD - 6);
+    let i = 0;
+    while (i < lines.length) {
+      this.need(PAD * 2 + 14 + LH * Math.min(2, lines.length - i));
+      const room = Math.max(1, Math.floor((this.BOTTOM - this.y - PAD * 2 - 14) / LH));
+      const chunk = lines.slice(i, i + room);
+      const h = PAD * 2 + 14 + chunk.length * LH;
+      this.P.rect(this.M, this.y, W, h, [251, 235, 210]);
+      this.P.rect(this.M, this.y, 4, h, [163, 95, 0]);
+      this.P.text(this.M + PAD + 6, this.y + PAD + 7, i ? 'OBSERVAÇÕES ESCRITAS NO SET (CONTINUAÇÃO)' : 'OBSERVAÇÕES ESCRITAS NO SET', { font: 'HB', size: 7.2, color: [163, 95, 0] });
+      chunk.forEach((l, k) => this.P.text(this.M + PAD + 6, this.y + PAD + 14 + size + k * LH, l, { size, color: INK }));
+      this.y += h + 4; i += chunk.length;
+    }
+  }
   thumbs(items) { // [{thumb, w, h, cap, link}]
     const M = this.M, gap = 10, cw = (this.W - 2 * M - 3 * gap) / 4, ch = cw * 0.75;
     let col = 0;
@@ -201,7 +219,7 @@ function pdfInfoBlock(D, p, info, extra = [], formato) {
   const mu = mapsUrl(info);
   D.para([`Tipo: ${(info.tipos || [info.tipo]).map(k => TIPO_L[k]).filter(Boolean).join(' / ') || '—'}`, info.local && 'Local: ' + info.local, info.endereco && 'Endereço: ' + info.endereco, ...extra, formato && 'Formato: ' + fmtFormato(formato)].filter(Boolean).join('   ·   '), 'H', 9.3, MUTE, 12.5);
   if (mu) D.para('Abrir local no mapa', 'H', 8.5, [45, 95, 168], 12, D.M, 200, mu);
-  if (info.obs) { D.y += 2; D.para(info.obs, 'H', 9.3, INK, 12.5); }
+  if (info.obs) { D.y += 6; D.setNote(info.obs); }
   const eq = equipeSorted(p, info);
   if (eq.length) {
     D.y += 6; D.P.text(D.M, D.y + 7, 'EQUIPE', { font: 'HB', size: 6.8, color: MUTE }); D.y += 12;
@@ -284,6 +302,7 @@ export function projectReportPdf(p, o = {}) {
     D.P.text(D.M, D.y + 8, [videoCode(p, v), v.cab.versao, v.cab.duracao && 'Duração ' + v.cab.duracao, v.ficha?.data && 'Gravado em ' + fmtDate(v.ficha.data)].filter(Boolean).join('  ·  '), { font: 'C', size: 8.4, color: MUTE });
     D.P.text(D.W - D.M, D.y + 8, `${c.valendo}/${c.total} valendo`, { font: 'C', size: 8.4, color: MUTE, align: 'right' });
     D.y += 13; D.para(videoName(v), 'HB', 13, INK, 16); D.y += 2;
+    if (v.ficha?.obs) { D.y += 2; D.setNote(v.ficha.obs); D.y += 4; }
     const rows = v.cenas.flatMap(cn => [{ v: v.id, c: cn.id, s: null }, ...cn.subcenas.map(s => ({ v: v.id, c: cn.id, s: s.id }))]).filter(t => !o.hideEmpty || hasMarks(findUnit(p, t))).map(t => { const x = unitPdfCells(p, t, null, true); return { cells: [[{ t: (t.s ? '  ' : '') + x.u.numero, f: 'HB', s: t.s ? 9.5 : 11.5, c: hasMarks(x.u) ? INK : MUTE }], x.st, x.arq, x.notes] }; });
     D.table(cols, rows);
     if (v.notas.length) { D.y += 4; D.para('NOTAS GERAIS', 'HB', 6.8, MUTE, 10); for (const n of v.notas) D.para(`•  ${fmtDate(ymdOf(n.criadaEm)).slice(0, 5)} ${hhmm(n.criadaEm)}  ${n.texto || '(áudio sem transcrição)'}`, 'H', 8.4, INK, 11); }
@@ -306,7 +325,7 @@ export function videoReportHtml(p, v, o = {}) {
   return `<article class="rep"><header class="rep-h"><div class="eyebrow">Relatório do vídeo${v.ficha?.data ? ` · ${esc(weekday(v.ficha.data))} ${esc(fmtDate(v.ficha.data))}` : ''}</div>
     <h1><span class="vtag" style="--vc:${videoColor(p, v)};font-size:14px">${esc(videoCode(p, v))}</span>${esc(videoName(v))}</h1>
     <div class="kv"><span><b>Projeto:</b> ${esc(projName(p))}</span>${v.cab.versao ? `<span><b>Versão:</b> ${esc(v.cab.versao)}</span>` : ''}${v.cab.duracao ? `<span><b>Duração:</b> ${esc(v.cab.duracao)}</span>` : ''}<span><b>Tipo:</b> ${esc(TIPO_L[info.tipo] || '—')}</span>${info.local ? `<span><b>Local:</b> ${esc(info.local)}</span>` : ''}${info.endereco ? `<span><b>Endereço:</b> ${esc(info.endereco)}</span>` : ''}${mu ? `<span><a href="${esc(mu)}" target="_blank" rel="noopener">Abrir no mapa</a></span>` : ''}${formatoOf(p, v) ? `<span><b>Formato:</b> ${esc(fmtFormato(formatoOf(p, v)))}</span>` : ''}<span class="mono">${c.valendo}/${c.total} valendo</span></div>
-    ${info.obs ? `<div style="white-space:pre-wrap;font-size:14px">${esc(info.obs)}</div>` : ''}
+    ${info.obs ? `<div class="setnote"><div class="lbl">Observações escritas no set</div>${esc(info.obs)}</div>` : ''}
     ${eq.length ? `<div class="eqgrid">${eq.map(e => `<div><span class="muted">${esc(e.funcao || '—')}</span><b>${esc(e.pessoa.nome)}</b></div>`).join('')}</div>` : ''}
     ${info.equipamentos.length ? `<div class="kv" style="font-size:13px"><b>Equipamentos:</b> ${esc(info.equipamentos.map(e => `${e.qtd > 1 ? e.qtd + '× ' : ''}${e.item}`).join(', '))}</div>` : ''}
   </header>

@@ -304,3 +304,5 @@ body.claude .micbtn,body.claude [data-act="rec-general"]{display:none}
 details.fold.panel>summary{padding:2px 0}
 .script .hd.row{display:flex;align-items:center}
 .script .hd .iconbtn{width:28px;height:28px;color:var(--ink)}
+.setnote{white-space:pre-wrap;font-size:14.5px;line-height:1.5;background:var(--warn-bg);border-left:4px solid var(--warn);border-radius:8px;padding:10px 14px;color:var(--ink)}
+.setnote .lbl{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--warn);margin-bottom:4px;white-space:normal}
