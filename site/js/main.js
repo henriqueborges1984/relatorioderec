@@ -301,7 +301,7 @@ function unitCard(p, t, o = {}) {
     </div>
     <div class="sb">
       <div class="two">${arq}
-        <div class="field"><label for="uo-${u.id}">Observações</label><textarea class="inp" rows="1" id="uo-${u.id}" data-u="obs" placeholder="Para o editor…">${esc(u.obs)}</textarea></div>
+        <div class="field ednote-field"><label for="uo-${u.id}">Observações para o editor</label><textarea class="inp" rows="1" id="uo-${u.id}" data-u="obs" placeholder="Ex.: usar o take 3 até 0:42, depois o take 5">${esc(u.obs)}</textarea></div>
       </div>
       ${isSub ? `<div class="field"><label for="ud-${u.id}">O que é esta subcena</label><input class="inp" id="ud-${u.id}" data-u="descricao" value="${esc(u.descricao || '')}" placeholder="Ex.: plano fechado do lettering"></div>` : ''}
       ${notesList(u.notas, t)}

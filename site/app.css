@@ -306,3 +306,8 @@ details.fold.panel>summary{padding:2px 0}
 .script .hd .iconbtn{width:28px;height:28px;color:var(--ink)}
 .setnote{white-space:pre-wrap;font-size:14.5px;line-height:1.5;background:var(--warn-bg);border-left:4px solid var(--warn);border-radius:8px;padding:10px 14px;color:var(--ink)}
 .setnote .lbl{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--warn);margin-bottom:4px;white-space:normal}
+.ednote{white-space:pre-wrap;background:var(--info-bg);border-left:4px solid var(--info);border-radius:6px;padding:6px 10px;margin:2px 0 6px;font-weight:500}
+.ednote .lbl{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--info);white-space:normal}
+.ednote-field label{color:var(--info)}
+.ednote-field .inp{border-left:4px solid var(--info);background:var(--info-bg)}
+.ednote-field .inp:focus{background:var(--surface)}

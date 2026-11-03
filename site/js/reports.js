@@ -51,7 +51,7 @@ function unitRow(p, t, o, extraFirst = '') {
   return `<tr class="${t.s ? 'rsub' : ''} ${hasMarks(u) ? '' : 'dim'}">${extraFirst}<td class="n"><span class="vtag" style="--vc:${videoColor(p, v)}">${esc(code)}</span>${esc(u.numero)}</td>
     <td>${pill(u.status)}<div>${stampsHtml(u)}</div></td>
     <td class="mono" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(arquivosText(u)) || '<span class="muted">—</span>'}${camCount(u) > 1 ? `<div class="muted" style="font-family:var(--f-body);font-size:11.5px">${camCount(u)} câmeras</div>` : ''}</td>
-    <td>${t.s && u.descricao ? `<div class="muted">${esc(u.descricao)}</div>` : ''}${(scriptChange(p, t) || []).map(ch => `<div class="chg"><b>${ch.k} alterado no set:</b> <span style="white-space:pre-wrap">${esc(ch.novo)}</span><div class="muted"><s style="white-space:pre-wrap">${esc(ch.orig)}</s></div></div>`).join('')}${u.obs ? `<div style="white-space:pre-wrap">${esc(u.obs)}</div>` : ''}${notes ? `<ul class="rn">${notes}</ul>` : ''}${meds.length ? `<div class="rthumbs">${meds.map(m => o.media ? o.media(m) : '').join('')}</div>` : ''}${!u.obs && !notes && !meds.length && !(t.s && u.descricao) && !scriptChange(p, t) ? '<span class="muted">—</span>' : ''}</td></tr>`;
+    <td>${t.s && u.descricao ? `<div class="muted">${esc(u.descricao)}</div>` : ''}${(scriptChange(p, t) || []).map(ch => `<div class="chg"><b>${ch.k} alterado no set:</b> <span style="white-space:pre-wrap">${esc(ch.novo)}</span><div class="muted"><s style="white-space:pre-wrap">${esc(ch.orig)}</s></div></div>`).join('')}${u.obs ? `<div class="ednote"><div class="lbl">Para o editor</div>${esc(u.obs)}</div>` : ''}${notes ? `<ul class="rn">${notes}</ul>` : ''}${meds.length ? `<div class="rthumbs">${meds.map(m => o.media ? o.media(m) : '').join('')}</div>` : ''}${!u.obs && !notes && !meds.length && !(t.s && u.descricao) && !scriptChange(p, t) ? '<span class="muted">—</span>' : ''}</td></tr>`;
 }
 function headHtml(p, d, title) {
   const info = dayInfo(p, d); const eq = equipeSorted(p, info); const pt = planTimes(p, d); const mu = mapsUrl(info);
@@ -240,7 +240,7 @@ const unitPdfCells = (p, t, dId, withDate) => {
   const notes = [];
   if (t.s && u.descricao) notes.push({ t: u.descricao, f: 'HO', c: MUTE });
   for (const ch of scriptChange(p, t) || []) { notes.push({ t: `${ch.k} alterado no set: ${ch.novo}`, f: 'HB', s: 8, c: [122, 62, 177] }); notes.push({ t: `Original: ${ch.orig}`, f: 'HO', s: 7.6, c: MUTE }); }
-  if ((u.obs || '').trim()) notes.push({ t: u.obs.trim() });
+  if ((u.obs || '').trim()) { notes.push({ t: 'PARA O EDITOR', f: 'HB', s: 6.8, c: [45, 95, 168] }); notes.push({ t: u.obs.trim(), f: 'HB', c: [21, 23, 26], x: 0 }); }
   for (const n of notesOf(u, dId)) notes.push({ t: `${withDate ? fmtDate(ymdOf(n.criadaEm)).slice(0, 5) + ' ' : ''}${hhmm(n.criadaEm)}  ${n.texto || '(áudio sem transcrição)'}`, f: n.texto ? 'H' : 'HO', x: 7, dot: true });
   const meds = (p.midias || []).filter(m => sameT(m, t) && (!dId || m.diariaId === dId));
   if (meds.length) notes.push({ t: `${meds.length} ${meds.length > 1 ? 'mídias' : 'mídia'} (ver fotos e vídeos)`, f: 'HO', c: MUTE });
@@ -365,7 +365,7 @@ export function diariaText(p, d) {
     const { u, code } = tLabel(p, t); if (!u) continue;
     L.push('', `${code} · CENA ${u.numero} — ${STATUS_L[u.status].toUpperCase()}${u.stamps.length ? ' [' + u.stamps.map(k => STAMP_L[k]).join(', ') + ']' : ''}`);
     if (arquivosText(u)) L.push('  Arquivo: ' + arquivosText(u, ', '));
-    if ((u.obs || '').trim()) L.push('  Obs.: ' + u.obs.trim());
+    if ((u.obs || '').trim()) L.push('  Para o editor: ' + u.obs.trim());
     for (const n of notesOf(u, d.id)) L.push(`  • ${hhmm(n.criadaEm)} ${n.texto || '(áudio sem transcrição)'}`);
   }
   return L.join('\n');
