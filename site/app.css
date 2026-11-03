@@ -311,3 +311,9 @@ details.fold.panel>summary{padding:2px 0}
 .ednote-field label{color:var(--info)}
 .ednote-field .inp{border-left:4px solid var(--info);background:var(--info-bg)}
 .ednote-field .inp:focus{background:var(--surface)}
+/* stronger colored boxes for notes (both themes) */
+.setnote-field{background:var(--warn-bg);border-left:4px solid var(--warn);border-radius:8px;padding:8px 10px}
+.setnote-field label{color:var(--warn)}
+.setnote-field .inp{background:var(--surface);border-color:var(--warn)}
+.ednote-field{background:var(--info-bg);border-left:4px solid var(--info);border-radius:8px;padding:8px 10px}
+.ednote-field .inp{border-left:1px solid var(--info);border-color:var(--info);background:var(--surface)}

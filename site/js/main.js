@@ -234,7 +234,7 @@ function fichaPanel(p, v) {
     </div>
     <div class="stack" style="gap:8px"><label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="fiFmtOwn" ${f.formato ? 'checked' : ''}> Formato diferente do projeto${!f.formato && p.formato ? ` <span class="muted">(projeto: ${esc(fmtFormato(p.formato))})</span>` : ''}</label>
       ${f.formato ? `<div class="grid">${formatoFields(f.formato, 'vff', 'data-vff')}</div>` : ''}</div>
-    <div class="field"><label for="fi-obs">Observações da gravação</label><textarea class="inp" id="fi-obs" data-fi="obs" rows="2">${esc(f.obs)}</textarea></div>
+    <div class="field setnote-field"><label for="fi-obs">Observações escritas no set</label><textarea class="inp" id="fi-obs" data-fi="obs" rows="2" placeholder="Ex.: gravamos com duas câmeras; CAM A em plano americano…">${esc(f.obs)}</textarea></div>
     ${others.length ? `<div class="row">${S.confirm === 'ficha-all' ? `<div class="confirm">Copiar data, local, equipe e equipamentos para os outros ${others.length} vídeo${others.length > 1 ? 's' : ''} do projeto? <button class="btn sm danger" data-act="ficha-all-yes">Aplicar</button><button class="btn sm" data-act="confirm-no">Cancelar</button></div>` : `<button class="btn" data-act="ask" data-c="ficha-all">Aplicar a todos os vídeos do projeto</button>`}</div>` : ''}
     </div></details>`;
 }

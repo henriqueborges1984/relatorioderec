@@ -144,7 +144,7 @@ class Doc {
         if (r.tail) this.P.text(this.W - M - PAD, this.y + PAD + 8, r.tail, { font: 'C', size: 8.2, color: MUTE, align: 'right' });
         this.y += LH + 2 * PAD - 2; this.P.line(M, this.y, this.W - M, this.y, 0.4, LINE); this.y += 1; continue;
       }
-      const cells = r.cells.map((items, ci) => items.flatMap(it => it.raw ? [it] : wrapText(it.t, it.f || 'H', it.s || 8.4, cols[ci].w - 2 * PAD - (it.x || 0)).map((t, k) => ({ ...it, t, dot: it.dot && k === 0 }))));
+      const cells = r.cells.map((items, ci) => items.flatMap(it => it.raw ? [it] : wrapText(it.t, it.f || 'H', it.s || 8.4, cols[ci].w - 2 * PAD - (it.x || 0) - (it.bg ? 6 : 0)).map((t, k) => ({ ...it, t, dot: it.dot && k === 0 }))));
       const n = Math.max(1, ...cells.map(c => c.length));
       this.need(Math.min(n, 3) * LH + 2 * PAD);
       this.y += PAD;
@@ -153,8 +153,9 @@ class Doc {
         cells.forEach((cl, ci) => {
           const it = cl[i]; if (!it) return;
           if (it.tag) { const tw = textW(it.tag, 'HB', 6.6) + 6; this.P.rect(xs[ci] + PAD, this.y + 0.5, tw, 9, it.tagColor); this.P.text(xs[ci] + PAD + 3, this.y + 7.4, it.tag, { font: 'HB', size: 6.6, color: [255, 255, 255] }); this.P.text(xs[ci] + PAD + tw + 4, this.y + 8.6, it.t, { font: it.f || 'HB', size: it.s || 10, color: it.c || INK }); return; }
+          if (it.bg) { this.P.rect(xs[ci] + PAD - 2, this.y - 1.2, cols[ci].w - 2 * PAD + 4, LH + (cl[i + 1] && cl[i + 1].bg ? 0.6 : 2.2), it.bg); this.P.rect(xs[ci] + PAD - 2, this.y - 1.2, 2.4, LH + (cl[i + 1] && cl[i + 1].bg ? 0.6 : 2.2), it.bar || it.c); }
           if (it.dot) this.P.circle(xs[ci] + PAD + 2.2, this.y + 5.4, 1.3, MUTE);
-          this.P.text(xs[ci] + PAD + (it.x || 0), this.y + 8.4, it.t, { font: it.f || 'H', size: it.s || 8.4, color: it.c || INK, link: it.link });
+          this.P.text(xs[ci] + PAD + (it.x || 0) + (it.bg ? 4 : 0), this.y + 8.4, it.t, { font: it.f || 'H', size: it.s || 8.4, color: it.c || INK, link: it.link });
         });
         this.y += LH;
       }
@@ -240,7 +241,7 @@ const unitPdfCells = (p, t, dId, withDate) => {
   const notes = [];
   if (t.s && u.descricao) notes.push({ t: u.descricao, f: 'HO', c: MUTE });
   for (const ch of scriptChange(p, t) || []) { notes.push({ t: `${ch.k} alterado no set: ${ch.novo}`, f: 'HB', s: 8, c: [122, 62, 177] }); notes.push({ t: `Original: ${ch.orig}`, f: 'HO', s: 7.6, c: MUTE }); }
-  if ((u.obs || '').trim()) { notes.push({ t: 'PARA O EDITOR', f: 'HB', s: 6.8, c: [45, 95, 168] }); notes.push({ t: u.obs.trim(), f: 'HB', c: [21, 23, 26], x: 0 }); }
+  if ((u.obs || '').trim()) { const box = { bg: [227, 236, 248], bar: [45, 95, 168] }; notes.push({ t: 'PARA O EDITOR', f: 'HB', s: 6.8, c: [45, 95, 168], ...box }); notes.push({ t: u.obs.trim(), f: 'HB', c: [21, 23, 26], ...box }); }
   for (const n of notesOf(u, dId)) notes.push({ t: `${withDate ? fmtDate(ymdOf(n.criadaEm)).slice(0, 5) + ' ' : ''}${hhmm(n.criadaEm)}  ${n.texto || '(áudio sem transcrição)'}`, f: n.texto ? 'H' : 'HO', x: 7, dot: true });
   const meds = (p.midias || []).filter(m => sameT(m, t) && (!dId || m.diariaId === dId));
   if (meds.length) notes.push({ t: `${meds.length} ${meds.length > 1 ? 'mídias' : 'mídia'} (ver fotos e vídeos)`, f: 'HO', c: MUTE });
