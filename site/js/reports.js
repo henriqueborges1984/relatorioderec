@@ -20,6 +20,7 @@ function scriptChange(p, t) {
   if (iN !== iO) out.push({ k: 'IMAGEM', novo: iN, orig: iO });
   return out.length ? out : null;
 }
+export const downloadUrl = m => m.driveId ? `https://drive.google.com/uc?export=download&id=${m.driveId}` : '';
 const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 const tLabel = (p, t) => { const v = findVideo(p, t.v); const u = findUnit(p, t); return { v, u, code: v ? videoCode(p, v) : '?', num: u ? u.numero : '?' }; };
 
@@ -149,9 +150,24 @@ class Doc {
       this.need(Math.min(n, 3) * LH + 2 * PAD);
       this.y += PAD;
       for (let i = 0; i < n; i++) {
-        if (this.y + LH > this.BOTTOM) { this.page(); this.y += 2; }
+        const needH = cells.some(cl => cl[i] && cl[i].thumbs) ? LH * THUMB_LINES : LH;
+        if (this.y + needH > this.BOTTOM) { this.page(); this.y += 2; }
         cells.forEach((cl, ci) => {
           const it = cl[i]; if (!it) return;
+          if (it.thumbs) {
+            const tw = 78, th = 52; let x = xs[ci] + PAD;
+            for (const m of it.thumbs) {
+              const r = Math.min(tw / (m.tw || 4), th / (m.th || 3)); const w = (m.tw || 4) * r, h = (m.th || 3) * r;
+              this.P.rect(x, this.y, tw, th, [238, 240, 236]);
+              try { this.P.image(dataUrlToBytes(m.thumb), m.tw || 320, m.th || 240, x + (tw - w) / 2, this.y + (th - h) / 2, w, h); } catch {}
+              if (m.tipo === 'video') { this.P.rect(x + 3, this.y + 3, 26, 9, INK); this.P.text(x + 5.5, this.y + 9.6, 'VÍDEO', { font: 'HB', size: 6, color: [255, 255, 255] }); }
+              const cap = [hhmm(m.criadaEm), m.legenda].filter(Boolean).join(' · ');
+              this.P.text(x, this.y + th + 7.5, wrapText(cap, 'H', 6.4, tw)[0] || '', { size: 6.4, color: MUTE });
+              if (m.driveId) this.P.link(x, this.y, tw, th + 9, downloadUrl(m));
+              x += tw + 6;
+            }
+            return;
+          }
           if (it.tag) { const tw = textW(it.tag, 'HB', 6.6) + 6; this.P.rect(xs[ci] + PAD, this.y + 0.5, tw, 9, it.tagColor); this.P.text(xs[ci] + PAD + 3, this.y + 7.4, it.tag, { font: 'HB', size: 6.6, color: [255, 255, 255] }); this.P.text(xs[ci] + PAD + tw + 4, this.y + 8.6, it.t, { font: it.f || 'HB', size: it.s || 10, color: it.c || INK }); return; }
           if (it.bg) { this.P.rect(xs[ci] + PAD - 2, this.y - 1.2, cols[ci].w - 2 * PAD + 4, LH + (cl[i + 1] && cl[i + 1].bg ? 0.6 : 2.2), it.bg); this.P.rect(xs[ci] + PAD - 2, this.y - 1.2, 2.4, LH + (cl[i + 1] && cl[i + 1].bg ? 0.6 : 2.2), it.bar || it.c); }
           if (it.dot) this.P.circle(xs[ci] + PAD + 2.2, this.y + 5.4, 1.3, MUTE);
@@ -232,6 +248,7 @@ function pdfInfoBlock(D, p, info, extra = [], formato) {
   }
   if (info.equipamentos?.length) { D.y += 6; D.P.text(D.M, D.y + 7, 'EQUIPAMENTOS', { font: 'HB', size: 6.8, color: MUTE }); D.y += 11; D.para(info.equipamentos.map(e => `${e.qtd > 1 ? e.qtd + '× ' : ''}${e.item}${e.cat ? ' (' + e.cat + ')' : ''}`).join('  ·  '), 'H', 8.6, INK, 11.5); }
 }
+const THUMB_LINES = 6; // a row of scene thumbnails takes 6 text lines (66 pt)
 const unitPdfCells = (p, t, dId, withDate) => {
   const { v, u, code } = tLabel(p, t);
   const st = [{ t: STATUS_L[u.status], f: 'HB', c: ST[u.status] }, ...u.stamps.map(k => ({ t: STAMP_L[k].toUpperCase(), f: 'HB', s: 6.8, c: SC[k] }))];
@@ -244,10 +261,12 @@ const unitPdfCells = (p, t, dId, withDate) => {
   if ((u.obs || '').trim()) { const box = { bg: [227, 236, 248], bar: [45, 95, 168] }; notes.push({ t: 'PARA O EDITOR', f: 'HB', s: 6.8, c: [45, 95, 168], ...box }); notes.push({ t: u.obs.trim(), f: 'HB', c: [21, 23, 26], ...box }); }
   for (const n of notesOf(u, dId)) notes.push({ t: `${withDate ? fmtDate(ymdOf(n.criadaEm)).slice(0, 5) + ' ' : ''}${hhmm(n.criadaEm)}  ${n.texto || '(áudio sem transcrição)'}`, f: n.texto ? 'H' : 'HO', x: 7, dot: true });
   const meds = (p.midias || []).filter(m => sameT(m, t) && (!dId || m.diariaId === dId));
-  if (meds.length) notes.push({ t: `${meds.length} ${meds.length > 1 ? 'mídias' : 'mídia'} (ver fotos e vídeos)`, f: 'HO', c: MUTE });
+  const withThumb = meds.filter(m => m.thumb);
+  for (let i = 0; i < withThumb.length; i += 3) { notes.push({ thumbs: withThumb.slice(i, i + 3), raw: true, t: '' }); for (let k = 1; k < THUMB_LINES; k++) notes.push({ t: '', raw: true }); }
+  if (withThumb.length) notes.push({ t: withThumb.some(m => m.driveId) ? 'Toque na imagem para baixar do Drive.' : 'Sincronize com o Drive para ter o link de download.', f: 'HO', s: 6.8, c: MUTE });
   return { v, u, code, st, arq, notes: notes.length ? notes : [{ t: '—', c: MUTE }] };
 };
-const mediaThumbs = (p, list) => list.filter(m => m.thumb).map(m => { const l = m.c ? tLabel(p, m) : null; const v = findVideo(p, m.v); return { thumb: m.thumb, w: m.tw || 320, h: m.th || 240, badge: m.tipo === 'video' ? 'VÍDEO' : '', cap: [l ? `${l.code} cena ${l.num}` : (v ? videoCode(p, v) : 'Diária'), hhmm(m.criadaEm), m.legenda].filter(Boolean).join(' · '), link: m.driveLink || '' }; });
+const mediaThumbs = (p, list) => list.filter(m => m.thumb).map(m => { const l = m.c ? tLabel(p, m) : null; const v = findVideo(p, m.v); return { thumb: m.thumb, w: m.tw || 320, h: m.th || 240, badge: m.tipo === 'video' ? 'VÍDEO' : '', cap: [l ? `${l.code} cena ${l.num}` : (v ? videoCode(p, v) : 'Diária'), hhmm(m.criadaEm), m.legenda].filter(Boolean).join(' · '), link: downloadUrl(m) }; });
 
 export function callSheetPdf(p, d) {
   const D = new Doc(`${projName(p)} · Ordem do dia · ${fmtDate(d.data)}`);
@@ -282,7 +301,7 @@ export function diariaReportPdf(p, d) {
   if (nao.length) { D.y += 6; D.para('Ficaram sem gravação: ' + nao.map(x => { const l = tLabel(p, x.t); return `${l.code} cena ${l.num}`; }).join(', '), 'HB', 8.8, [163, 95, 0], 12); }
   const gen = p.videos.flatMap(v => v.notas.filter(n => n.diariaId === d.id).map(n => ({ v, n })));
   if (gen.length) { D.section('Notas gerais'); for (const { v, n } of gen) D.para(`•  ${videoCode(p, v)} · ${hhmm(n.criadaEm)}  ${n.texto || '(áudio sem transcrição)'}`, 'H', 8.6, INK, 11.5); }
-  const meds = mediaThumbs(p, (p.midias || []).filter(m => m.diariaId === d.id));
+  const meds = mediaThumbs(p, (p.midias || []).filter(m => m.diariaId === d.id && !m.c));
   if (meds.length) { D.section('Fotos e vídeos', `${meds.length} ${meds.length === 1 ? 'item' : 'itens'}`); D.thumbs(meds); }
   return D.finish(`Relatório ${fmtDate(d.data)} – ${projName(p)}`);
 }
@@ -311,7 +330,7 @@ export function projectReportPdf(p, o = {}) {
   }
   const eq = allPessoasFuncoes(p);
   if (eq.length) { D.section('Equipe'); D.table([{ t: 'NOME', w: 170 }, { t: 'FUNÇÃO', w: 200 }, { t: 'DATAS', w: W - 370 }], eq.map(r => ({ cells: [[{ t: r.pessoa.nome, f: 'HB' }], [{ t: [...r.funcoes].join(', ') || '—' }], [{ t: r.dias.map(d => fmtDate(d).slice(0, 5)).join(', ') || '—', f: 'C', s: 8 }]] }))); }
-  const meds = mediaThumbs(p, p.midias || []);
+  const meds = mediaThumbs(p, (p.midias || []).filter(m => !m.c));
   if (meds.length) { D.section('Fotos e vídeos', `${meds.length} ${meds.length === 1 ? 'item' : 'itens'}`); D.thumbs(meds); }
   return D.finish(`Relatório do projeto – ${projName(p)}`);
 }
@@ -350,7 +369,7 @@ export function videoReportPdf(p, v, o = {}) {
   const cols = [{ t: 'CENA', w: 56 }, { t: 'STATUS', w: 84 }, { t: 'ARQUIVO APROVADO', w: 110 }, { t: 'OBSERVAÇÕES E NOTAS', w: W - 56 - 84 - 110 }];
   D.table(cols, videoTargets(v).filter(t => !o.hideEmpty || hasMarks(findUnit(p, t))).map(t => { const x = unitPdfCells(p, t, null, false); return { cells: [[{ t: (t.s ? '  ' : '') + x.u.numero, f: 'HB', s: t.s ? 9.5 : 11.5, c: hasMarks(x.u) ? INK : MUTE }], x.st, x.arq, x.notes] }; }));
   if (v.notas.length) { D.section('Notas gerais'); for (const n of v.notas) D.para(`•  ${hhmm(n.criadaEm)}  ${n.texto || '(áudio sem transcrição)'}`, 'H', 8.6, INK, 11.5); }
-  const meds = mediaThumbs(p, (p.midias || []).filter(m => m.v === v.id));
+  const meds = mediaThumbs(p, (p.midias || []).filter(m => m.v === v.id && !m.c));
   if (meds.length) { D.section('Fotos e vídeos', `${meds.length} ${meds.length === 1 ? 'item' : 'itens'}`); D.thumbs(meds); }
   return D.finish(`Relatório ${videoCode(p, v)} – ${projName(p)}`);
 }

@@ -5,7 +5,7 @@ import { newProject, newDiaria, projName, videoName, videoCode, videoColor, unit
 import { VoiceRecorder, SR, PROB, parseCenaRef, parseVideoRef, parseArquivo, saysValendo, saysRefazer, saysDialogo, aiConfigured, transcribeBlob, getPasscode, setPasscode, spokenPunctuation } from './voice.js';
 import { processPhoto, videoPoster, VideoRecorder, extFor } from './media.js';
 import * as drive from './drive.js';
-import { callSheetHtml, diariaReportHtml, projectReportHtml, callSheetPdf, diariaReportPdf, projectReportPdf, diariaText, mapsUrl, videoReportHtml, videoReportPdf, fmtFormato } from './reports.js';
+import { callSheetHtml, diariaReportHtml, projectReportHtml, callSheetPdf, diariaReportPdf, projectReportPdf, diariaText, mapsUrl, videoReportHtml, videoReportPdf, fmtFormato, downloadUrl } from './reports.js';
 import CONFIG from './config.js';
 import { merge3, comparable } from './merge.js';
 
@@ -383,7 +383,7 @@ function diariaSet(p, d) {
     ${(() => { const meds = p.midias.filter(m => m.diariaId === d.id && !m.c); return meds.length ? `<div class="thumbs">${meds.map(thumbBtn).join('')}</div>` : ''; })()}`;
 }
 function diariaRelatorio(p, d) {
-  const media = m => m.thumb ? `<a ${m.driveLink ? `href="${esc(m.driveLink)}" target="_blank" rel="noopener"` : `href="#" data-act="media-view" data-m="${m.id}"`}><img src="${m.thumb}" alt="">${m.tipo === 'video' ? 'Vídeo' : 'Foto'} ${hhmm(m.criadaEm)}${m.legenda ? ' · ' + esc(m.legenda) : ''}</a>` : '';
+  const media = m => m.thumb ? `<a ${m.driveLink ? `href="${esc(downloadUrl(m))}" target="_blank" rel="noopener" title="Baixar do Drive"` : `href="#" data-act="media-view" data-m="${m.id}"`}><img src="${m.thumb}" alt="">${m.driveId ? '<span class="dl">⬇ Baixar</span>' : ''}${m.tipo === 'video' ? 'Vídeo' : 'Foto'} ${hhmm(m.criadaEm)}${m.legenda ? ' · ' + esc(m.legenda) : ''}</a>` : '';
   const audio = n => n.audioId ? ` <button class="btn sm ghost" data-act="play" data-a="${n.audioId}">${IC.play}ouvir</button>` : '';
   return `<div class="seg" role="tablist"><button role="tab" aria-selected="${S.repKind === 'relatorio'}" data-act="repkind" data-v="relatorio">Relatório da diária</button><button role="tab" aria-selected="${S.repKind === 'ordem'}" data-act="repkind" data-v="ordem">Ordem do dia</button></div>
     <div class="row"><button class="btn primary" data-act="${S.repKind === 'ordem' ? 'pdf-ordem' : 'pdf-rel'}">${IC.down}Baixar PDF</button>${navigator.canShare ? `<button class="btn" data-act="${S.repKind === 'ordem' ? 'share-ordem' : 'share-rel'}">${IC.share}Enviar PDF</button>` : ''}${S.repKind === 'relatorio' ? `<button class="btn" data-act="copy-text">Copiar texto</button>` : ''}${drive.driveConfigured() ? `<button class="btn" data-act="sync">${IC.drive}Salvar no Drive</button>` : ''}</div>
@@ -394,7 +394,7 @@ function diariaRelatorio(p, d) {
 function renderProjectReport() {
   const p = P(); if (!p) return go('inicio');
   setTop('Relatório do projeto', `<button class="btn sm" data-act="go" data-h="p-${p.id}">${IC.back}<span>Projeto</span></button>`);
-  const media = m => m.thumb ? `<a ${m.driveLink ? `href="${esc(m.driveLink)}" target="_blank" rel="noopener"` : `href="#" data-act="media-view" data-m="${m.id}"`}><img src="${m.thumb}" alt="">${fmtDate(ymdOf(m.criadaEm)).slice(0, 5)} ${hhmm(m.criadaEm)}</a>` : '';
+  const media = m => m.thumb ? `<a ${m.driveLink ? `href="${esc(downloadUrl(m))}" target="_blank" rel="noopener" title="Baixar do Drive"` : `href="#" data-act="media-view" data-m="${m.id}"`}><img src="${m.thumb}" alt="">${m.driveId ? '<span class="dl">⬇ Baixar</span>' : ''}${fmtDate(ymdOf(m.criadaEm)).slice(0, 5)} ${hhmm(m.criadaEm)}</a>` : '';
   app().innerHTML = `<section class="stack">
     <div class="row"><button class="btn primary" data-act="pdf-proj">${IC.down}Baixar PDF</button>${navigator.canShare ? `<button class="btn" data-act="share-proj">${IC.share}Enviar PDF</button>` : ''}${drive.driveConfigured() ? `<button class="btn" data-act="sync">${IC.drive}Salvar no Drive</button>` : ''}</div>
     <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="hideEmpty" ${S.hideEmpty ? 'checked' : ''}> Ocultar cenas sem marcação</label>
@@ -406,7 +406,7 @@ function renderProjectReport() {
 function renderVideoReport() {
   const p = P(), v = V(); if (!p || !v) return go(p ? 'p-' + p.id : 'inicio');
   setTop(`Relatório · ${videoCode(p, v)}`, `<button class="btn sm" data-act="go" data-h="v-${p.id}-${v.id}">${IC.back}<span>Vídeo</span></button>`);
-  const media = m => m.thumb ? `<a ${m.driveLink ? `href="${esc(m.driveLink)}" target="_blank" rel="noopener"` : `href="#" data-act="media-view" data-m="${m.id}"`}><img src="${m.thumb}" alt="">${hhmm(m.criadaEm)}${m.legenda ? ' · ' + esc(m.legenda) : ''}</a>` : '';
+  const media = m => m.thumb ? `<a ${m.driveLink ? `href="${esc(downloadUrl(m))}" target="_blank" rel="noopener" title="Baixar do Drive"` : `href="#" data-act="media-view" data-m="${m.id}"`}><img src="${m.thumb}" alt="">${m.driveId ? '<span class="dl">⬇ Baixar</span>' : ''}${hhmm(m.criadaEm)}${m.legenda ? ' · ' + esc(m.legenda) : ''}</a>` : '';
   app().innerHTML = `<section class="stack">
     <div class="row"><button class="btn primary" data-act="pdf-video">${IC.down}Baixar PDF</button>${navigator.canShare ? `<button class="btn" data-act="share-video">${IC.share}Enviar PDF</button>` : ''}${drive.driveConfigured() ? `<button class="btn" data-act="sync">${IC.drive}Salvar no Drive</button>` : ''}</div>
     <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="hideEmpty" ${S.hideEmpty ? 'checked' : ''}> Ocultar cenas sem marcação</label>
@@ -686,7 +686,7 @@ async function openMediaViewer(mid, fresh) {
     <div class="viewer">${src}</div>
     ${!url && m.driveLink ? `<a class="btn" href="${esc(m.driveLink)}" target="_blank" rel="noopener">${IC.drive}Abrir no Drive</a>` : ''}
     <div class="field"><label for="mLeg">Legenda</label><input class="inp" id="mLeg" value="${esc(m.legenda)}" placeholder="Ex.: reflexo na janela, cuidado na edição"></div>
-    ${m.driveLink ? `<div class="muted" style="font-size:12.5px">Enviado ao Drive. <a href="${esc(m.driveLink)}" target="_blank" rel="noopener">Abrir no Drive</a></div>` : (drive.driveConfigured() ? '<div class="muted" style="font-size:12.5px">Ainda não enviado ao Drive.</div>' : '')}
+    ${m.driveLink ? `<div class="muted" style="font-size:12.5px">Enviado ao Drive. <a href="${esc(m.driveLink)}" target="_blank" rel="noopener">Abrir no Drive</a> · <a href="${esc(downloadUrl(m))}" target="_blank" rel="noopener">Baixar</a></div>` : (drive.driveConfigured() ? '<div class="muted" style="font-size:12.5px">Ainda não enviado ao Drive.</div>' : '')}
     <div class="row">${S.confirm === 'del-media' ? `<div class="confirm">Excluir esta mídia? <button class="btn sm danger" data-act="media-del-yes" data-m="${m.id}">Excluir</button><button class="btn sm" data-act="media-del-no" data-m="${m.id}">Não</button></div>` : `<button class="btn danger" data-act="media-del" data-m="${m.id}">${IC.trash}Excluir</button>`}<span class="spacer"></span>${fresh ? `<button class="btn" data-act="media-more">${IC.cam}Outra</button>` : ''}<button class="btn primary" data-act="media-ok" data-m="${m.id}">Pronto</button></div>`);
 }
 

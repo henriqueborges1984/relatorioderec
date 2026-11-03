@@ -317,3 +317,5 @@ details.fold.panel>summary{padding:2px 0}
 .setnote-field .inp{background:var(--surface);border-color:var(--warn)}
 .ednote-field{background:var(--info-bg);border-left:4px solid var(--info);border-radius:8px;padding:8px 10px}
 .ednote-field .inp{border-left:1px solid var(--info);border-color:var(--info);background:var(--surface)}
+.rthumbs a{position:relative}
+.rthumbs .dl{font-size:11px;font-weight:600;color:var(--info)}
