@@ -263,6 +263,9 @@ function scriptBlock(c) {
     return `<div class="stack" style="gap:8px;border:1.5px solid var(--focus);border-radius:8px;padding:10px">
       <div class="field"><label for="se-img-${c.id}">IMAGEM</label><textarea class="inp" id="se-img-${c.id}" rows="4">${esc(c.imagemTxt || '')}</textarea></div>
       <div class="field"><label for="se-txt-${c.id}">TEXTO</label><textarea class="inp" id="se-txt-${c.id}" rows="6">${esc(c.textoTxt || '')}</textarea></div>
+      ${(c.complementos || []).map((x, i) => `<div class="muted" style="font-size:11.5px;letter-spacing:.08em;border-top:1px dashed var(--line);padding-top:8px">CONTINUAÇÃO ${i + 1} DA CENA</div>
+      <div class="field"><label for="se-img-${c.id}-${i}">IMAGEM</label><textarea class="inp" id="se-img-${c.id}-${i}" rows="3">${esc(x.imagemTxt || '')}</textarea></div>
+      <div class="field"><label for="se-txt-${c.id}-${i}">TEXTO</label><textarea class="inp" id="se-txt-${c.id}-${i}" rows="4">${esc(x.textoTxt || '')}</textarea></div>`).join('')}
       <div class="row">${c.original ? `<button class="btn sm ghost" data-act="script-restore">Voltar ao original da agência</button>` : ''}<span class="spacer"></span><button class="btn sm" data-act="script-cancel">Cancelar</button><button class="btn sm primary" data-act="script-save">Salvar texto</button></div></div>`;
   }
   const cmp = (c.complementos || []).map(x => `<div class="cmp"><div class="img">${cleanHtml(x.imagem) || '<span class="muted">—</span>'}</div><div>${cleanHtml(x.texto) || '<span class="muted">—</span>'}</div></div>`).join('');
@@ -942,14 +945,17 @@ document.addEventListener('click', async e => {
     case 'script-cancel': S.editScript = null; render(); break;
     case 'script-save': case 'script-restore': {
       const t = tFromEl(b); const c = findUnit(p, { v: t.v, c: t.c });
-      if (act === 'script-restore') { if (c.original) { Object.assign(c, { imagem: c.original.imagem, texto: c.original.texto, imagemTxt: c.original.imagemTxt, textoTxt: c.original.textoTxt }); delete c.original; c.stamps = c.stamps.filter(k => k !== 'dialogo'); } }
+      const snap = () => ({ imagem: c.imagem, texto: c.texto, imagemTxt: c.imagemTxt || '', textoTxt: c.textoTxt || '', complementos: (c.complementos || []).map(x => ({ ...x })) });
+      const sameAsOriginal = () => { const o = c.original; return o && o.imagemTxt === c.imagemTxt && o.textoTxt === c.textoTxt && JSON.stringify((o.complementos || c.complementos).map(x => [x.imagemTxt || '', x.textoTxt || ''])) === JSON.stringify(c.complementos.map(x => [x.imagemTxt || '', x.textoTxt || ''])); };
+      if (act === 'script-restore') { if (c.original) { Object.assign(c, { imagem: c.original.imagem, texto: c.original.texto, imagemTxt: c.original.imagemTxt, textoTxt: c.original.textoTxt }); if (c.original.complementos) c.complementos = c.original.complementos.map(x => ({ ...x })); delete c.original; c.stamps = c.stamps.filter(k => k !== 'dialogo'); } }
       else {
-        const img = $(`#se-img-${c.id}`).value.replace(/\s+$/g, ''), txt = $(`#se-txt-${c.id}`).value.replace(/\s+$/g, '');
-        if (img !== (c.imagemTxt || '') || txt !== (c.textoTxt || '')) {
-          if (!c.original) c.original = { imagem: c.imagem, texto: c.texto, imagemTxt: c.imagemTxt || '', textoTxt: c.textoTxt || '', em: nowIso() };
-          if (img !== (c.imagemTxt || '')) { c.imagemTxt = img; c.imagem = textToHtml(img); }
-          if (txt !== (c.textoTxt || '')) { c.textoTxt = txt; c.texto = textToHtml(txt); }
-          if (c.original.imagemTxt === c.imagemTxt && c.original.textoTxt === c.textoTxt) { delete c.original; c.stamps = c.stamps.filter(k => k !== 'dialogo'); }
+        const val = id => ($(`#${id}`)?.value ?? '').replace(/\s+$/g, '');
+        const edits = [{ o: c, img: val(`se-img-${c.id}`), txt: val(`se-txt-${c.id}`) }, ...(c.complementos || []).map((x, i) => ({ o: x, img: val(`se-img-${c.id}-${i}`), txt: val(`se-txt-${c.id}-${i}`) }))];
+        if (edits.some(e => e.img !== (e.o.imagemTxt || '') || e.txt !== (e.o.textoTxt || ''))) {
+          if (!c.original) c.original = { ...snap(), em: nowIso() };
+          else if (!c.original.complementos) c.original.complementos = (c.complementos || []).map(x => ({ ...x }));
+          for (const e of edits) { if (e.img !== (e.o.imagemTxt || '')) { e.o.imagemTxt = e.img; e.o.imagem = textToHtml(e.img); } if (e.txt !== (e.o.textoTxt || '')) { e.o.textoTxt = e.txt; e.o.texto = textToHtml(e.txt); } }
+          if (sameAsOriginal()) { delete c.original; c.stamps = c.stamps.filter(k => k !== 'dialogo'); }
           else { if (!c.stamps.includes('dialogo')) c.stamps.push('dialogo'); touch(c, p, t.v); }
         }
       }

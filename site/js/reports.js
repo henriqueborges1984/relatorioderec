@@ -14,8 +14,10 @@ const cenaOf = (p, t) => { const v = findVideo(p, t.v); return v ? v.cenas.find(
 function scriptChange(p, t) {
   if (t.s) return null; const c = cenaOf(p, t); if (!c || !c.original) return null;
   const out = [];
-  if ((c.original.textoTxt || '') !== (c.textoTxt || '')) out.push({ k: 'TEXTO', novo: c.textoTxt || '', orig: c.original.textoTxt || '' });
-  if ((c.original.imagemTxt || '') !== (c.imagemTxt || '')) out.push({ k: 'IMAGEM', novo: c.imagemTxt || '', orig: c.original.imagemTxt || '' });
+  const all = (o, k) => [o[k + 'Txt'] || '', ...((o === c.original ? (o.complementos || c.complementos) : c.complementos) || []).map(x => x[k + 'Txt'] || '')].filter(x => x.trim()).join('\n\n');
+  const tN = all(c, 'texto'), tO = all(c.original, 'texto'), iN = all(c, 'imagem'), iO = all(c.original, 'imagem');
+  if (tN !== tO) out.push({ k: 'TEXTO', novo: tN, orig: tO });
+  if (iN !== iO) out.push({ k: 'IMAGEM', novo: iN, orig: iO });
   return out.length ? out : null;
 }
 const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
