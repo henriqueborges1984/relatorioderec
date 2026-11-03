@@ -1,17 +1,17 @@
-import { $, $$, uid, esc, cleanHtml, nowIso, clone, hhmm, todayYmd, fmtDate, weekday, mmss, slug, durTxt, fmtBytes, ymdOf, IC, STATUS, STATUS_L, STAMPS, FUNCOES, TIPOS_DIARIA, TIPO_L, EVENTOS, EVENTO_L, PLANOS, toast } from './util.js';
+import { $, $$, uid, esc, cleanHtml, nowIso, clone, hhmm, todayYmd, fmtDate, weekday, mmss, slug, durTxt, fmtBytes, ymdOf, IC, STATUS, STATUS_L, STAMPS, FUNCOES, TIPOS_DIARIA, TIPO_L, EVENTOS, EVENTO_L, PLANOS, ORIENTACOES, RESOLUCOES, FPS, EQUIP_CATS, camLetter, toast } from './util.js';
 import { store, migrateV1 } from './store.js';
-import { parseDocx, excerpt, newUnit, newCena, newVideo, suggestPrep } from './docx.js';
-import { newProject, newDiaria, projName, videoName, videoCode, videoColor, units, findUnit, findVideo, findDiaria, hasMarks, unitExcerpt, counts, planTimes, diariaLabel, unitsDoneIn, sameT, unitMin, allNotes } from './model.js';
+import { parseDocx, excerpt, newUnit, newCena, newVideo, newFicha, suggestPrep } from './docx.js';
+import { newProject, newDiaria, projName, videoName, videoCode, videoColor, units, findUnit, findVideo, findDiaria, hasMarks, unitExcerpt, counts, planTimes, diariaLabel, unitsDoneIn, sameT, unitMin, allNotes, ensureDay, dayVideos, dayInfo, camCount, arquivosText, formatoOf, allPessoasFuncoes } from './model.js';
 import { VoiceRecorder, SR, PROB, parseCenaRef, parseVideoRef, parseArquivo, saysValendo, saysRefazer, saysDialogo, aiConfigured, transcribeBlob, getPasscode, setPasscode, spokenPunctuation } from './voice.js';
 import { processPhoto, videoPoster, VideoRecorder, extFor } from './media.js';
 import * as drive from './drive.js';
-import { callSheetHtml, diariaReportHtml, projectReportHtml, callSheetPdf, diariaReportPdf, projectReportPdf, diariaText, mapsUrl } from './reports.js';
+import { callSheetHtml, diariaReportHtml, projectReportHtml, callSheetPdf, diariaReportPdf, projectReportPdf, diariaText, mapsUrl, videoReportHtml, videoReportPdf, fmtFormato } from './reports.js';
 import CONFIG from './config.js';
 
 /* ============================== state ============================== */
 const S = {
   projetos: [], view: 'inicio', pId: null, vId: null, dId: null,
-  ptab: 'diarias', dtab: null, vmode: 'set', filter: 'todas',
+  ptab: 'videos', dtab: null, filter: 'todas', kits: [], editScript: null,
   active: null, openScript: new Set(), openPrep: new Set(), openStamps: new Set(), confirm: null,
   sync: { busy: false, msg: '' }, hideEmpty: false, repKind: 'relatorio'
 };
@@ -31,14 +31,14 @@ function flushAll() { for (const [id, t] of timers) { clearTimeout(t); const p =
 addEventListener('pagehide', flushAll);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll(); });
 
-// diária that receives marks made now: the open diária, otherwise today's diária of the project
-function currentDiariaId(p = P()) {
+// day that receives marks made now: the open day plan, otherwise the recording date of the video (today if not set)
+function currentDiariaId(p = P(), vId = null) {
   if (!p) return null;
   if (S.view === 'diaria' && S.dId) return S.dId;
-  const today = todayYmd();
-  return (p.diarias.find(d => d.data === today) || {}).id || null;
+  const v = findVideo(p, vId || S.vId) || (p.videos.length === 1 ? p.videos[0] : null);
+  return ensureDay(p, v?.ficha?.data || todayYmd()).id;
 }
-function touch(u, p = P()) { const id = currentDiariaId(p); if (id && !u.diarias.includes(id)) u.diarias.push(id); }
+function touch(u, p = P(), vId = null) { const id = currentDiariaId(p, vId); if (id && !u.diarias.includes(id)) u.diarias.push(id); }
 
 /* ============================== routing ============================== */
 function go(h) { if (location.hash.slice(1) !== h) location.hash = h; else route(); }
@@ -46,13 +46,14 @@ function route() {
   const h = location.hash.slice(1); let m;
   S.confirm = null;
   if ((m = h.match(/^p-([a-z0-9]+)$/i)) && S.projetos.some(p => p.id === m[1])) { S.pId = m[1]; S.view = 'projeto'; }
-  else if ((m = h.match(/^v-([a-z0-9]+)-([a-z0-9]+)$/i)) && S.projetos.some(p => p.id === m[1] && p.videos.some(v => v.id === m[2]))) { if (S.vId !== m[2]) S.active = null; S.pId = m[1]; S.vId = m[2]; S.view = 'video'; }
+  else if ((m = h.match(/^v-([a-z0-9]+)-([a-z0-9]+)$/i)) && S.projetos.some(p => p.id === m[1] && p.videos.some(v => v.id === m[2]))) { if (S.vId !== m[2]) { S.active = null; S.fichaOpen = false; S.editScript = null; } S.pId = m[1]; S.vId = m[2]; S.view = 'video'; }
   else if ((m = h.match(/^d-([a-z0-9]+)-([a-z0-9]+)$/i)) && S.projetos.some(p => p.id === m[1] && p.diarias.some(d => d.id === m[2]))) {
     if (S.dId !== m[2]) { S.active = null; S.dtab = null; }
     S.pId = m[1]; S.dId = m[2]; S.view = 'diaria';
-    if (!S.dtab) { const d = Dd(); S.dtab = d.plano.length ? 'set' : (d.equipe.length || d.local ? 'plano' : 'dados'); }
+    if (!S.dtab) { const d = Dd(); S.dtab = d.plano.length ? 'set' : 'plano'; }
   }
   else if ((m = h.match(/^r-([a-z0-9]+)$/i)) && S.projetos.some(p => p.id === m[1])) { S.pId = m[1]; S.view = 'relprojeto'; }
+  else if ((m = h.match(/^rv-([a-z0-9]+)-([a-z0-9]+)$/i)) && S.projetos.some(p => p.id === m[1] && p.videos.some(v => v.id === m[2]))) { S.pId = m[1]; S.vId = m[2]; S.view = 'relvideo'; }
   else if (h === 'config') S.view = 'config';
   else S.view = 'inicio';
   render(); window.scrollTo(0, 0);
@@ -88,6 +89,7 @@ function render() {
   else if (S.view === 'video') renderVideo();
   else if (S.view === 'diaria') renderDiaria();
   else if (S.view === 'relprojeto') renderProjectReport();
+  else if (S.view === 'relvideo') renderVideoReport();
   else if (S.view === 'config') renderConfig();
   else renderHome();
   renderDock();
@@ -118,38 +120,38 @@ function renderHome() {
 function renderProject() {
   const p = P(); if (!p) return go('inicio');
   setTop(projName(p));
-  const tabs = [['diarias', 'Diárias', IC.calendar], ['videos', 'Vídeos', IC.film], ['equipe', 'Equipe', IC.people], ['relatorios', 'Relatórios', IC.report]];
+  if (!['videos', 'equipe', 'relatorios'].includes(S.ptab)) S.ptab = 'videos';
+  const tabs = [['videos', 'Vídeos', IC.film], ['equipe', 'Equipe', IC.people], ['relatorios', 'Relatório', IC.report]];
+  const groups = dateGroups(p);
   let body = '';
-  if (S.ptab === 'videos') {
-    body = `<div class="row"><span class="spacer"></span><button class="btn" data-act="add-video-manual">${IC.plus}Vídeo sem arquivo</button><button class="btn primary" data-act="add-docx">${IC.upload}Roteiro .docx</button></div>
-    ${p.videos.length ? `<div class="card-list">${p.videos.map(v => { const c = counts(v); return `<button class="pcard vcard" data-act="go" data-h="v-${p.id}-${v.id}" style="--vc:${videoColor(p, v)}"><span class="vbar"></span>
-      <span style="min-width:0;display:flex;flex-direction:column;gap:5px"><span class="eyebrow"><span class="vtag">${esc(videoCode(p, v))}</span>${esc(v.cab.versao || '')}${v.cab.duracao ? ' · ' + esc(v.cab.duracao) : ''}</span><span class="t" style="font-size:18px">${esc(videoName(v))}</span>${progressBar(v)}</span>
-      <span class="s mono">${c.valendo}/${c.total}</span></button>`; }).join('')}</div>` : `<div class="empty"><strong>Nenhum vídeo ainda</strong>Envie os roteiros .docx da agência. Pode enviar vários de uma vez.</div>`}`;
-  } else if (S.ptab === 'equipe') {
-    body = `<div class="muted" style="font-size:13.5px">Cadastre aqui quem costuma trabalhar no projeto. Em cada diária você escolhe quem estava e a função daquele dia.</div>
+  if (S.ptab === 'equipe') {
+    body = `<div class="muted" style="font-size:13.5px">Cadastro de quem trabalha no projeto. Em cada vídeo, na ficha de gravação, você escolhe quem estava e a função.</div>
     <div class="stack">${p.pessoas.map(pe => `<div class="eqrow" data-pe="${pe.id}"><input class="inp" data-pe-f="nome" value="${esc(pe.nome)}" placeholder="Nome" aria-label="Nome">${funcaoSelect(p, pe.funcao, 'data-pe-f="funcao"', 'fn')}<button class="iconbtn" data-act="del-pessoa" aria-label="Remover">${IC.trash}</button></div>`).join('')}</div>
     <div class="row"><button class="btn" data-act="add-pessoa">${IC.plus}Pessoa</button></div>
     ${eqSummary(p)}`;
   } else if (S.ptab === 'relatorios') {
-    const ds = [...p.diarias].sort((a, b) => (a.data || '').localeCompare(b.data || ''));
-    body = `<button class="pcard" data-act="go" data-h="r-${p.id}"><span class="eyebrow">Todos os vídeos e diárias</span><span class="t">Relatório do projeto</span><span class="s">Status de todas as cenas, arquivos aprovados, notas, equipe e mídias</span></button>
-    ${ds.map(d => `<div class="pcard" style="cursor:default"><span class="eyebrow">${esc(diariaLabel(p, d))} · ${esc(weekday(d.data))} ${esc(fmtDate(d.data))}</span><span class="t" style="font-size:18px">${esc(TIPO_L[d.tipo] || '')}${d.local ? ' · ' + esc(d.local) : ''}</span>
-      <div class="row"><button class="btn sm" data-act="open-rel" data-d="${d.id}" data-k="ordem">${IC.calendar}Ordem do dia</button><button class="btn sm" data-act="open-rel" data-d="${d.id}" data-k="relatorio">${IC.report}Relatório da diária</button></div></div>`).join('')}
+    body = `<button class="pcard" data-act="go" data-h="r-${p.id}"><span class="eyebrow">Todos os vídeos</span><span class="t">Relatório do projeto</span><span class="s">Status de todas as cenas, arquivos aprovados, notas, equipe e mídias</span></button>
+    ${groups.filter(g => g.data).map(g => { const d = p.diarias.find(x => x.data === g.data); return `<div class="pcard" style="cursor:default"><span class="eyebrow">Gravação · ${esc(weekday(g.data))} ${esc(fmtDate(g.data))}</span><span class="s">${g.videos.map(v => esc(videoCode(p, v))).join(' · ')}</span>
+      <div class="row"><button class="btn sm" data-act="open-day" data-date="${g.data}" data-k="ordem">${IC.calendar}Ordem do dia</button><button class="btn sm" data-act="open-day" data-date="${g.data}" data-k="relatorio">${IC.report}Relatório do dia</button></div></div>`; }).join('')}
+    ${p.videos.length ? `<div class="eyebrow" style="margin-top:6px">Por vídeo</div><div class="card-list">${p.videos.map(v => `<button class="pcard vcard" data-act="go" data-h="rv-${p.id}-${v.id}" style="--vc:${videoColor(p, v)}"><span class="vbar"></span><span style="min-width:0"><span class="eyebrow"><span class="vtag">${esc(videoCode(p, v))}</span>Relatório do vídeo</span><br><b>${esc(videoName(v))}</b></span><span class="s">${esc(v.ficha?.data ? fmtDate(v.ficha.data) : '')}</span></button>`).join('')}</div>` : ''}
     ${p.drive?.folderLink ? `<a class="btn" href="${esc(p.drive.folderLink)}" target="_blank" rel="noopener">${IC.drive}Abrir pasta do projeto no Drive</a>` : ''}`;
   } else {
-    const ds = [...p.diarias].sort((a, b) => (b.data || '').localeCompare(a.data || ''));
-    body = `<div class="row"><span class="spacer"></span><button class="btn primary" data-act="new-diaria">${IC.plus}Nova diária</button></div>
-    ${ds.length ? `<div class="card-list">${ds.map(d => { const nCenas = d.plano.filter(i => i.k === 'cena').length; const done = unitsDoneIn(p, d).length; return `<button class="pcard" data-act="go" data-h="d-${p.id}-${d.id}"><span class="eyebrow">${esc(diariaLabel(p, d))} · ${esc(weekday(d.data))} ${esc(fmtDate(d.data))}${d.data === todayYmd() ? ' · HOJE' : ''}</span>
-      <span class="t" style="font-size:19px">${esc(TIPO_L[d.tipo] || '')}${d.local ? ' · ' + esc(d.local) : ''}</span>
-      <span class="s"><span>Chegada ${esc(d.call || '—')}</span><span>${nCenas} cena${nCenas === 1 ? '' : 's'} no plano</span><span>${done} gravada${done === 1 ? '' : 's'}</span><span>${d.equipe.length} na equipe</span></span></button>`; }).join('')}</div>`
-      : `<div class="empty"><strong>Nenhuma diária ainda</strong>${p.videos.length ? 'Crie a diária para montar o plano de filmagem e registrar a gravação.' : 'Comece pela aba Vídeos: envie os roteiros. Depois crie as diárias.'}</div>`}`;
+    body = `<div class="row"><span class="spacer"></span><button class="btn" data-act="add-video-manual">${IC.plus}Vídeo sem arquivo</button><button class="btn primary" data-act="add-docx">${IC.upload}Roteiro .docx</button></div>
+    ${p.videos.length ? groups.map(g => `<section class="stack" style="gap:8px">
+      <div class="row"><div class="eyebrow">${g.data ? `Gravação · ${esc(weekday(g.data))} ${esc(fmtDate(g.data))}${g.data === todayYmd() ? ' · HOJE' : ''}` : 'Sem data de gravação'}</div><span class="spacer"></span>${g.data ? `<button class="btn sm" data-act="open-day" data-date="${g.data}" data-k="plano">${IC.calendar}Plano do dia</button>` : ''}</div>
+      <div class="card-list">${g.videos.map(v => { const c = counts(v); return `<button class="pcard vcard" data-act="go" data-h="v-${p.id}-${v.id}" style="--vc:${videoColor(p, v)}"><span class="vbar"></span>
+      <span style="min-width:0;display:flex;flex-direction:column;gap:5px"><span class="eyebrow"><span class="vtag">${esc(videoCode(p, v))}</span>${esc(v.cab.versao || '')}${v.cab.duracao ? ' · ' + esc(v.cab.duracao) : ''}${v.ficha?.local ? ' · ' + esc(v.ficha.local) : ''}</span><span class="t" style="font-size:18px">${esc(videoName(v))}</span>${progressBar(v)}</span>
+      <span class="s mono">${c.valendo}/${c.total}</span></button>`; }).join('')}</div></section>`).join('')
+      : `<div class="empty"><strong>Nenhum vídeo ainda</strong>Envie os roteiros .docx da agência. Pode enviar vários de uma vez.</div>`}`;
   }
+  const f = p.formato || {};
   app().innerHTML = `<section class="stack">
-    <div><div class="eyebrow">${esc(p.produtora || 'Projeto')}</div><h1>${esc(p.nome || 'Projeto sem nome')}</h1></div>
+    <div><div class="eyebrow">${esc(p.produtora || 'Projeto')}</div><h1>${esc(p.nome || 'Projeto sem nome')}</h1>${p.formato ? `<div class="kvline" style="margin-top:4px"><span>Formato <b>${esc(fmtFormato(p.formato))}</b></span></div>` : ''}</div>
     <details class="fold" ${!p.nome ? 'open' : ''}><summary>Dados do projeto</summary><div class="panel" style="margin-top:10px"><div class="grid">
-      <div class="field"><label for="pj-nome">Nome do projeto / vídeo</label><input class="inp" id="pj-nome" data-pj="nome" value="${esc(p.nome)}" placeholder="Ex.: Honda – Treinamento Líderes"></div>
+      <div class="field"><label for="pj-nome">Nome do projeto</label><input class="inp" id="pj-nome" data-pj="nome" value="${esc(p.nome)}" placeholder="Ex.: Honda – Treinamento Líderes"></div>
       <div class="field"><label for="pj-produtora">Produtora</label><input class="inp" id="pj-produtora" data-pj="produtora" value="${esc(p.produtora)}" placeholder="Ex.: Mooverama"></div>
       <div class="field"><label for="pj-agencia">Agência / cliente</label><input class="inp" id="pj-agencia" data-pj="agencia" value="${esc(p.agencia)}"></div>
+      ${formatoFields(f, 'pjf', 'data-pjf')}
       <div class="field wide"><label for="pj-obs">Observações</label><textarea class="inp" id="pj-obs" data-pj="obs" rows="2">${esc(p.obs)}</textarea></div></div>
       <div class="row" style="margin-top:12px">${p.drive?.folderLink ? `<a class="btn sm" href="${esc(p.drive.folderLink)}" target="_blank" rel="noopener">${IC.drive}Pasta no Drive</a>` : ''}<button class="btn sm" data-act="export-backup">${IC.down}Backup do projeto</button><span class="spacer"></span>${S.confirm === 'del-project' ? `<div class="confirm">Excluir o projeto deste aparelho? (o Drive não é apagado) <button class="btn sm danger" data-act="del-project-yes">Excluir</button><button class="btn sm" data-act="confirm-no">Cancelar</button></div>` : `<button class="btn sm danger" data-act="ask" data-c="del-project">${IC.trash}Excluir projeto</button>`}</div>
     </div></details>
@@ -157,10 +159,22 @@ function renderProject() {
     ${body}
   </section>`;
 }
+function dateGroups(p) {
+  const m = new Map();
+  for (const v of p.videos) { const k = v.ficha?.data || ''; if (!m.has(k)) m.set(k, []); m.get(k).push(v); }
+  return [...m.entries()].map(([data, videos]) => ({ data, videos })).sort((a, b) => !a.data ? 1 : !b.data ? -1 : b.data.localeCompare(a.data));
+}
+function formatoFields(f, idp, attr) {
+  const o = f.orient || 'H';
+  const opts = RESOLUCOES[o] || [];
+  const custom = f.res && !opts.includes(f.res);
+  return `<div class="field"><label for="${idp}-o">Orientação</label><select class="inp" id="${idp}-o" ${attr}="orient">${ORIENTACOES.map(([k, l]) => `<option value="${k}" ${o === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div class="field"><label for="${idp}-r">Resolução (px)</label><select class="inp" id="${idp}-r" ${attr}="res">${opts.map(r => `<option value="${r}" ${f.res === r ? 'selected' : ''}>${r.replace('x', ' × ')}</option>`).join('')}<option value="__outra" ${custom ? 'selected' : ''}>Outra…</option></select>${custom || f._custom ? `<input class="inp mono" style="margin-top:6px" ${attr}="resCustom" value="${esc(custom ? f.res : '')}" placeholder="largura x altura, ex.: 1440x1800" aria-label="Resolução personalizada">` : ''}</div>
+    <div class="field"><label for="${idp}-f">Quadros por segundo</label><select class="inp" id="${idp}-f" ${attr}="fps"><option value="">—</option>${FPS.map(x => `<option ${f.fps === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>`;
+}
 function eqSummary(p) {
-  const rows = [];
-  for (const pe of p.pessoas) { const ds = p.diarias.filter(d => d.equipe.some(e => e.pessoaId === pe.id)); if (ds.length) rows.push(`<tr><td><b>${esc(pe.nome)}</b></td><td>${esc([...new Set(ds.flatMap(d => d.equipe.filter(e => e.pessoaId === pe.id).map(e => e.funcao)).filter(Boolean))].join(', ') || '—')}</td><td class="mono">${esc(ds.map(d => fmtDate(d.data).slice(0, 5)).join(', '))}</td></tr>`); }
-  return rows.length ? `<div class="rtab"><table><thead><tr><th>Nome</th><th>Funções exercidas</th><th>Diárias</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>` : '';
+  const rows = allPessoasFuncoes(p).map(r => `<tr><td><b>${esc(r.pessoa.nome)}</b></td><td>${esc([...r.funcoes].join(', ') || '—')}</td><td>${esc([...new Set(r.videos.map(v => videoCode(p, v)))].join(', '))}</td><td class="mono">${esc(r.dias.map(d => fmtDate(d).slice(0, 5)).join(', '))}</td></tr>`);
+  return rows.length ? `<div class="rtab"><table><thead><tr><th>Nome</th><th>Funções</th><th>Vídeos</th><th>Datas</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>` : '';
 }
 function funcaoSelect(p, val, attrs, cls = '') {
   const all = FUNCOES.flatMap(g => g[1]);
@@ -171,33 +185,62 @@ function funcaoSelect(p, val, attrs, cls = '') {
 /* ---------- video ---------- */
 function renderVideo() {
   const p = P(), v = V(); if (!p || !v) return go(p ? 'p-' + p.id : 'inicio');
-  setTop(`${videoCode(p, v)} · ${projName(p)}`, `<button class="btn sm" data-act="go" data-h="p-${p.id}">${IC.back}<span>Projeto</span></button>`);
+  setTop(`${videoCode(p, v)} · ${projName(p)}`, `<button class="btn sm" data-act="go" data-h="rv-${p.id}-${v.id}">${IC.report}<span>Relatório</span></button><button class="btn sm" data-act="go" data-h="p-${p.id}">${IC.back}<span>Projeto</span></button>`);
   const cb = v.cab;
   const list = v.cenas.filter(c => sceneFilter(c));
   app().innerHTML = `<section class="stack">
     <div class="panel stack" style="--vc:${videoColor(p, v)};border-left:6px solid var(--vc)">
       <div class="cab"><span class="code">${esc(cb.codigo || videoCode(p, v))}</span><h2 style="flex:1;min-width:200px">${esc(videoName(v))}</h2></div>
-      <div class="cab meta"><span>Data do roteiro: <b>${esc(cb.data || '—')}</b></span><span>Duração: <b>${esc(cb.duracao || '—')}</b></span><span>Cenas: <b>${esc(cb.cenas || v.cenas.length)}</b></span><span>Versão: <b>${esc(cb.versao || '—')}</b></span></div>
+      <div class="cab meta"><span>Data do roteiro: <b>${esc(cb.data || '—')}</b></span><span>Duração: <b>${esc(cb.duracao || '—')}</b></span><span>Cenas: <b>${esc(cb.cenas || v.cenas.length)}</b></span><span>Versão: <b>${esc(cb.versao || '—')}</b></span>${formatoOf(p, v) ? `<span>Formato: <b>${esc(fmtFormato(formatoOf(p, v)))}</b></span>` : ''}</div>
       <details class="fold"><summary>Editar cabeçalho</summary><div class="grid" style="margin-top:10px">
         ${[['codigo', 'Código do job'], ['cliente', 'Cliente'], ['titulo', 'Título'], ['data', 'Data do roteiro'], ['duracao', 'Duração'], ['cenas', 'Nº de cenas'], ['versao', 'Versão']].map(([k, l]) => `<div class="field ${k === 'titulo' ? 'wide' : ''}"><label for="cb-${k}">${l}</label><input class="inp" id="cb-${k}" data-cab="${k}" value="${esc(cb[k])}"></div>`).join('')}
         <div class="field wide muted" style="font-size:12.5px">Arquivo: ${esc(v.arquivo || 'criado manualmente')}</div></div>
         <div class="row" style="margin-top:10px">${S.confirm === 'del-video' ? `<div class="confirm">Remover este vídeo e todas as marcações dele? <button class="btn sm danger" data-act="del-video-yes">Remover</button><button class="btn sm" data-act="confirm-no">Cancelar</button></div>` : `<button class="btn sm danger" data-act="ask" data-c="del-video">${IC.trash}Remover vídeo</button>`}</div>
       </details>
     </div>
-    <div class="seg" role="tablist"><button role="tab" aria-selected="${S.vmode === 'prep'}" data-act="vmode" data-v="prep">Preparação</button><button role="tab" aria-selected="${S.vmode === 'set'}" data-act="vmode" data-v="set">Gravação</button></div>
-    ${S.vmode === 'prep' ? `<div class="muted" style="font-size:13.5px">Preencha ambiente, plano e tempo de cada cena. Esses dados montam o plano de filmagem e a ordem do dia. As sugestões vieram do texto do roteiro; revise.</div>` : ''}
+    ${fichaPanel(p, v)}
     <div class="row"><div class="filters" role="group">${[['todas', 'Todas'], ['abertas', 'Em aberto'], ['marcadas', 'Com marcações']].map(([k, l]) => `<button class="chipbtn" aria-pressed="${S.filter === k}" data-act="filter" data-v="${k}">${l}</button>`).join('')}</div><span class="spacer"></span><button class="btn sm" data-act="add-cena">${IC.plus}Cena extra</button></div>
     <datalist id="ambientes">${[...new Set(p.videos.flatMap(x => units(x).map(u => u.prep?.ambiente).filter(Boolean)))].map(a => `<option value="${esc(a)}">`).join('')}</datalist>
-    <div class="stack">${list.map(c => S.vmode === 'prep' ? prepCard(p, v, c) : unitCard(p, { v: v.id, c: c.id, s: null }, { subs: true })).join('') || '<div class="empty">Nenhuma cena neste filtro.</div>'}</div>
-    ${S.vmode === 'set' ? `<div class="panel stack"><div class="row"><h3>Notas gerais do vídeo</h3><span class="spacer"></span><button class="btn sm" data-act="rec-general" data-v="${v.id}">${IC.mic}Gravar</button></div>${notesList(v.notas, { v: v.id, c: null, s: null }) || '<div class="muted" style="font-size:13.5px">Notas sem cena específica aparecem aqui.</div>'}</div>` : ''}
+    <div class="stack">${list.map(c => unitCard(p, { v: v.id, c: c.id, s: null }, { subs: true })).join('') || '<div class="empty">Nenhuma cena neste filtro.</div>'}</div>
+    <div class="panel stack"><div class="row"><h3>Notas gerais do vídeo</h3><span class="spacer"></span><button class="btn sm" data-act="rec-general" data-v="${v.id}">${IC.mic}Gravar</button></div>${notesList(v.notas, { v: v.id, c: null, s: null }) || '<div class="muted" style="font-size:13.5px">Notas sem cena específica aparecem aqui.</div>'}</div>
   </section>`;
+}
+// Recording sheet of a video: date, place, team, equipment, format
+function fichaPanel(p, v) {
+  const f = v.ficha; const geo = f.geo ? `<span class="mono" style="font-size:12.5px">${f.geo.lat.toFixed(5)}, ${f.geo.lng.toFixed(5)}</span> <a href="${esc(mapsUrl(f))}" target="_blank" rel="noopener">Ver no mapa</a>` : '';
+  const empty = !f.data && !f.local && !f.equipe.length;
+  const resumo = [f.data && fmtDate(f.data), TIPO_L[f.tipo], f.local, f.equipe.length && `${f.equipe.length} na equipe`, f.equipamentos.length && `${f.equipamentos.length} equipamento${f.equipamentos.length > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+  const others = p.videos.filter(x => x !== v);
+  return `<details class="fold panel" id="ficha" ${empty || S.fichaOpen ? 'open' : ''}><summary style="font-size:15px;color:var(--ink)">Ficha de gravação${resumo ? ` <span class="muted" style="font-weight:400;font-size:13px">· ${esc(resumo)}</span>` : ''}</summary>
+    <div class="stack" style="margin-top:12px">
+    <div class="grid">
+      <div class="field"><label for="fi-data">Data da gravação</label><input class="inp" type="date" id="fi-data" data-fi="data" value="${esc(f.data)}"></div>
+      <div class="field"><label for="fi-tipo">Tipo</label><select class="inp" id="fi-tipo" data-fi="tipo">${TIPOS_DIARIA.map(([k, l]) => `<option value="${k}" ${f.tipo === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label for="fi-local">Local</label><input class="inp" id="fi-local" data-fi="local" value="${esc(f.local)}" placeholder="Ex.: Estúdio Mooverama"></div>
+      <div class="field wide"><label for="fi-end">Endereço</label><input class="inp" id="fi-end" data-fi="endereco" value="${esc(f.endereco)}" placeholder="Rua, número, cidade"></div>
+      <div class="field wide"><div class="row"><button class="btn sm" data-act="geo">${IC.pin}${f.geo ? 'Atualizar localização' : 'Usar minha localização'}</button>${geo}${f.geo ? `<button class="iconbtn" data-act="geo-clear" aria-label="Remover localização">${IC.x}</button>` : ''}</div></div>
+    </div>
+    <div class="stack" style="gap:8px"><div class="row"><h3>Equipe</h3><span class="spacer"></span>${others.some(x => x.ficha.equipe.length) ? `<button class="btn sm" data-act="eq-copy">Copiar de outro vídeo</button>` : ''}</div>
+      <datalist id="pessoas">${p.pessoas.map(pe => `<option value="${esc(pe.nome)}">`).join('')}</datalist>
+      ${f.equipe.map(e => { const pe = p.pessoas.find(x => x.id === e.pessoaId); return `<div class="eqrow" data-eq="${e.id}"><input class="inp" list="pessoas" data-eq-f="nome" value="${esc(pe?.nome || '')}" placeholder="Nome" aria-label="Nome">${funcaoSelect(p, e.funcao, 'data-eq-f="funcao"', 'fn')}<button class="iconbtn" data-act="eq-del" aria-label="Remover">${IC.trash}</button></div>`; }).join('')}
+      <div class="row"><button class="btn sm" data-act="eq-add">${IC.plus}Pessoa</button>${p.pessoas.filter(pe => pe.nome && !f.equipe.some(e => e.pessoaId === pe.id)).slice(0, 12).map(pe => `<button class="chipbtn" data-act="eq-quick" data-pe="${pe.id}">+ ${esc(pe.nome)}</button>`).join('')}</div>
+    </div>
+    <div class="stack" style="gap:8px"><div class="row"><h3>Set de equipamentos</h3><span class="spacer"></span>${S.kits.length ? `<select class="inp" id="kitLoad" style="width:auto;min-height:34px;font-size:13px" aria-label="Carregar kit"><option value="">Carregar kit…</option>${S.kits.map(k => `<option value="${k.id}">${esc(k.nome)} (${k.itens.length})</option>`).join('')}</select>` : ''}</div>
+      ${f.equipamentos.map(e => `<div class="eqrow" data-eqp="${e.id}" style="grid-template-columns:minmax(0,.8fr) minmax(0,1.4fr) 64px auto"><select class="inp" data-eqp-f="cat" aria-label="Categoria">${EQUIP_CATS.map(c => `<option ${e.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select><input class="inp" data-eqp-f="item" value="${esc(e.item)}" placeholder="Ex.: Sony FX6" aria-label="Equipamento"><input class="inp mono" type="number" min="1" data-eqp-f="qtd" value="${esc(e.qtd || 1)}" aria-label="Quantidade"><button class="iconbtn" data-act="eqp-del" aria-label="Remover">${IC.trash}</button></div>`).join('')}
+      <div class="row"><button class="btn sm" data-act="eqp-add">${IC.plus}Equipamento</button>${f.equipamentos.length ? (S.confirm === 'kit-save' ? `<input class="inp" id="kitName" style="width:200px;min-height:34px" placeholder="Nome do kit"><button class="btn sm primary" data-act="kit-save-ok">Salvar kit</button><button class="btn sm" data-act="confirm-no">Cancelar</button>` : `<button class="btn sm ghost" data-act="ask" data-c="kit-save">Salvar como kit</button>`) : ''}</div>
+    </div>
+    <div class="stack" style="gap:8px"><label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="fiFmtOwn" ${f.formato ? 'checked' : ''}> Formato diferente do projeto${!f.formato && p.formato ? ` <span class="muted">(projeto: ${esc(fmtFormato(p.formato))})</span>` : ''}</label>
+      ${f.formato ? `<div class="grid">${formatoFields(f.formato, 'vff', 'data-vff')}</div>` : ''}</div>
+    <div class="field"><label for="fi-obs">Observações da gravação</label><textarea class="inp" id="fi-obs" data-fi="obs" rows="2">${esc(f.obs)}</textarea></div>
+    ${others.length ? `<div class="row">${S.confirm === 'ficha-all' ? `<div class="confirm">Copiar data, local, equipe e equipamentos para os outros ${others.length} vídeo${others.length > 1 ? 's' : ''} do projeto? <button class="btn sm danger" data-act="ficha-all-yes">Aplicar</button><button class="btn sm" data-act="confirm-no">Cancelar</button></div>` : `<button class="btn" data-act="ask" data-c="ficha-all">Aplicar a todos os vídeos do projeto</button>`}</div>` : ''}
+    </div></details>`;
 }
 function sceneFilter(c) {
   if (S.filter === 'abertas') return [c, ...c.subcenas].some(u => ['pendente', 'refazer', 'gravada'].includes(u.status));
   if (S.filter === 'marcadas') return [c, ...c.subcenas].some(hasMarks);
   return true;
 }
-function prepFields(u, idp) {
+function prepFields(u, idp, applyBtn = true) {
   const pr = u.prep || (u.prep = {});
   const opt = (arr, val) => arr.map(([k, l]) => `<option value="${k}" ${val === k ? 'selected' : ''}>${l}</option>`).join('');
   return `<div class="prep">
@@ -205,54 +248,52 @@ function prepFields(u, idp) {
     <div class="field"><label for="${idp}-ie">INT / EXT</label><select class="inp" id="${idp}-ie" data-prep="intext">${opt([['', '—'], ['INT', 'Interna'], ['EXT', 'Externa']], pr.intext)}</select></div>
     <div class="field"><label for="${idp}-dn">Período</label><select class="inp" id="${idp}-dn" data-prep="periodo">${opt([['', '—'], ['DIA', 'Dia'], ['NOITE', 'Noite']], pr.periodo)}</select></div>
     <div class="field"><label for="${idp}-pl">Plano</label><select class="inp" id="${idp}-pl" data-prep="plano"><option value="">—</option>${PLANOS.map(x => `<option ${pr.plano === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}${pr.plano && !PLANOS.includes(pr.plano) ? `<option selected>${esc(pr.plano)}</option>` : ''}</select></div>
+    <div class="field"><label for="${idp}-cm">Câmeras</label><select class="inp" id="${idp}-cm" data-prep="cameras">${[1, 2, 3, 4, 5, 6].map(n => `<option value="${n}" ${camCount(u) === n ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
     <div class="field"><label for="${idp}-tm">Tempo (min)</label><input class="inp mono" id="${idp}-tm" type="number" min="0" step="5" inputmode="numeric" data-prep="tempo" value="${esc(pr.tempo)}" placeholder="20"></div>
     <div class="field"><label for="${idp}-el">Elenco</label><input class="inp" id="${idp}-el" data-prep="elenco" value="${esc(pr.elenco)}" placeholder="Apresentador…"></div>
-    <div class="field wide"><label for="${idp}-ne">Necessidades (objetos, figurino, equipamento)</label><input class="inp" id="${idp}-ne" data-prep="necessidades" value="${esc(pr.necessidades)}"></div>
-    ${pr.pos ? `<div class="wide muted" style="font-size:12.5px">Parece ser só pós-produção (lettering, arte, arquivo). Tempo de set sugerido: 0 min.</div>` : ''}
+    <div class="field"><label for="${idp}-ne">Necessidades</label><input class="inp" id="${idp}-ne" data-prep="necessidades" value="${esc(pr.necessidades)}" placeholder="Objetos, figurino…"></div>
+    ${applyBtn ? `<div class="wide row"><button class="btn sm ghost" data-act="prep-all">Aplicar a todas…</button>${pr.pos ? `<span class="muted" style="font-size:12px">Parece ser só pós-produção (lettering, arte). Tempo de set sugerido: 0 min.</span>` : ''}</div>` : ''}
   </div>`;
 }
-function prepCard(p, v, c) {
-  const open = S.openScript.has(c.id);
-  return `<article class="scene" data-v="${v.id}" data-c="${c.id}" data-s="">
-    <div class="sh" style="grid-template-columns:auto 1fr"><span class="slate" style="cursor:default"><small>CENA</small>${esc(c.numero)}</span><div class="mid"><div class="excerpt">${esc(excerpt(c))}</div></div></div>
-    <div class="sb">${prepFields(c, 'pc-' + c.id)}
-      ${c.subcenas.map(s => `<div class="sub" data-v="${v.id}" data-c="${c.id}" data-s="${s.id}"><div class="sb" style="padding:10px"><div class="row"><b class="mono">${esc(s.numero)}</b><span class="muted" style="font-size:13px">${esc(s.descricao || '')}</span></div>${prepFields(s, 'ps-' + s.id)}</div></div>`).join('')}
-      <div class="row">${c.imagem || c.texto || c.complementos.length ? `<button class="btn sm ghost" data-act="script">${IC.doc}${open ? 'Ocultar roteiro' : 'Ver roteiro'}</button>` : ''}<span class="spacer"></span><button class="btn sm" data-act="add-sub">${IC.plus}Subcena ${esc(nextSubNum(c))}</button></div>
-      ${open ? scriptBlock(c) : ''}</div></article>`;
-}
 function scriptBlock(c) {
+  if (S.editScript === c.id) {
+    return `<div class="stack" style="gap:8px;border:1.5px solid var(--focus);border-radius:8px;padding:10px">
+      <div class="field"><label for="se-img-${c.id}">IMAGEM</label><textarea class="inp" id="se-img-${c.id}" rows="4">${esc(c.imagemTxt || '')}</textarea></div>
+      <div class="field"><label for="se-txt-${c.id}">TEXTO</label><textarea class="inp" id="se-txt-${c.id}" rows="6">${esc(c.textoTxt || '')}</textarea></div>
+      <div class="row">${c.original ? `<button class="btn sm ghost" data-act="script-restore">Voltar ao original da agência</button>` : ''}<span class="spacer"></span><button class="btn sm" data-act="script-cancel">Cancelar</button><button class="btn sm primary" data-act="script-save">Salvar texto</button></div></div>`;
+  }
   const cmp = (c.complementos || []).map(x => `<div class="cmp"><div class="img">${cleanHtml(x.imagem) || '<span class="muted">—</span>'}</div><div>${cleanHtml(x.texto) || '<span class="muted">—</span>'}</div></div>`).join('');
-  return `<div class="script"><div class="img"><div class="hd">IMAGEM</div>${cleanHtml(c.imagem) || '<span class="muted">—</span>'}</div><div><div class="hd">TEXTO</div>${cleanHtml(c.texto) || '<span class="muted">—</span>'}</div>${cmp}</div>`;
+  return `<div class="script"><div class="img"><div class="hd row" style="gap:6px">IMAGEM<span class="spacer"></span><button class="iconbtn" data-act="script-edit" aria-label="Editar texto do roteiro" title="Editar texto do roteiro">${IC.edit}</button></div>${cleanHtml(c.imagem) || '<span class="muted">—</span>'}</div><div><div class="hd">TEXTO${c.original ? ' <span class="badge pend">alterado no set</span>' : ''}</div>${cleanHtml(c.texto) || '<span class="muted">—</span>'}</div>${cmp}</div>`;
 }
+const textToHtml = t => String(t || '').split(/\n{2,}/).map(par => par.trim()).filter(Boolean).map(par => `<p>${esc(par).replace(/\n/g, '<br>')}</p>`).join('');
 function nextSubNum(c) { const used = c.subcenas.map(s => parseInt(s.numero.split('.').pop(), 10) || 0); return `${c.numero}.${(used.length ? Math.max(...used) : 0) + 1}`; }
 
-/* ---------- unit card (recording) ---------- */
+/* ---------- unit card ---------- */
 function unitCard(p, t, o = {}) {
   const v = findVideo(p, t.v); const c = v && v.cenas.find(x => x.id === t.c); const u = findUnit(p, t);
   if (!u) return '';
   const isSub = !!t.s;
   const act = S.active && sameT(S.active, t);
   const key = `${t.v}|${t.c}|${t.s || ''}`;
-  const open = !isSub && S.openScript.has(c.id);
-  const prepOpen = S.openPrep.has(key);
   const exc = isSub ? (u.descricao || '') : excerpt(c);
-  const pr = u.prep || {};
   const stOpen = S.openStamps.has(key);
   const meds = p.midias.filter(m => sameT(m, t));
+  const nCam = camCount(u);
   const subs = !isSub && o.subs ? c.subcenas.map(s => unitCard(p, { v: t.v, c: t.c, s: s.id }, { nested: true, multi: o.multi })).join('') : '';
+  const arq = nCam > 1
+    ? `<div class="field"><label>Arquivo(s) aprovado(s) por câmera</label><div class="stack" style="gap:6px">${Array.from({ length: nCam }, (_, i) => { const L = camLetter(i); const val = u.arquivosCam?.[L] ?? (i === 0 ? u.arquivos : '') ?? ''; return `<div class="row" style="gap:6px;flex-wrap:nowrap"><span class="mono" style="min-width:52px;font-size:12.5px">Câm ${L}</span><input class="inp mono" data-ucam="${L}" value="${esc(val)}" placeholder="${L}001_C012" aria-label="Arquivo câmera ${L}"></div>`; }).join('')}</div></div>`
+    : `<div class="field"><label for="ua-${u.id}">Arquivo(s) aprovado(s)</label><textarea class="inp mono" rows="1" id="ua-${u.id}" data-u="arquivos" placeholder="A001_C012">${esc(u.arquivos)}</textarea></div>`;
   return `<article class="${o.nested ? 'sub' : 'scene'} st-${u.status} ${act ? 'scene active' : ''}" data-v="${t.v}" data-c="${t.c}" data-s="${t.s || ''}">
     <div class="sh">
       <button class="slate" data-act="select" aria-label="Selecionar cena ${esc(u.numero)} para gravar">${o.multi ? `<small style="color:${videoColor(p, v)};opacity:1;filter:brightness(1.6)">${esc(videoCode(p, v))}</small>` : (isSub ? '' : '<small>CENA</small>')}${esc(u.numero)}</button>
       <div class="mid">${o.time ? `<div class="mono muted" style="font-size:12.5px">${o.time}</div>` : ''}${exc ? `<div class="excerpt">${esc(exc)}</div>` : ''}
-        ${(pr.ambiente || pr.plano) ? `<div class="prep-line">${pr.ambiente ? `<span><b>${esc(pr.ambiente)}</b></span>` : ''}${pr.intext || pr.periodo ? `<span>${esc([pr.intext, pr.periodo].filter(Boolean).join(' · '))}</span>` : ''}${pr.plano ? `<span>${esc(pr.plano)}</span>` : ''}${pr.elenco ? `<span>${esc(pr.elenco)}</span>` : ''}</div>` : ''}
         <div class="status" role="group" aria-label="Status">${STATUS.map(s => `<button class="st k-${s.k}" aria-pressed="${u.status === s.k}" data-act="status" data-val="${s.k}">${s.l}</button>`).join('')}</div>
         <div class="stamps ${stOpen ? '' : 'compact'}">${STAMPS.map(s => `<button class="stamp t-${s.k}" aria-pressed="${u.stamps.includes(s.k)}" data-act="stamp" data-val="${s.k}">${s.l}</button>`).join('')}<button class="more" data-act="stamps-open">${u.stamps.length ? '+ carimbo' : '+ Carimbos'}</button></div>
       </div>
       <button class="micbtn" data-act="rec" aria-label="Gravar nota na cena ${esc(u.numero)}">${IC.mic}</button>
     </div>
     <div class="sb">
-      <div class="two">
-        <div class="field"><label for="ua-${u.id}">Arquivo(s) aprovado(s)</label><textarea class="inp mono" rows="1" id="ua-${u.id}" data-u="arquivos" placeholder="A001_C012">${esc(u.arquivos)}</textarea></div>
+      <div class="two">${arq}
         <div class="field"><label for="uo-${u.id}">Observações</label><textarea class="inp" rows="1" id="uo-${u.id}" data-u="obs" placeholder="Para o editor…">${esc(u.obs)}</textarea></div>
       </div>
       ${isSub ? `<div class="field"><label for="ud-${u.id}">O que é esta subcena</label><input class="inp" id="ud-${u.id}" data-u="descricao" value="${esc(u.descricao || '')}" placeholder="Ex.: plano fechado do lettering"></div>` : ''}
@@ -260,14 +301,12 @@ function unitCard(p, t, o = {}) {
       ${meds.length ? `<div class="thumbs">${meds.map(m => thumbBtn(m)).join('')}</div>` : ''}
       <div class="row">
         <button class="btn sm" data-act="media" aria-label="Adicionar foto ou vídeo">${IC.cam}Foto/vídeo</button>
-        <button class="btn sm ghost" data-act="prep-toggle" aria-expanded="${prepOpen}">${prepOpen ? 'Fechar preparação' : 'Preparação'}</button>
-        ${!isSub && (c.imagem || c.texto || c.complementos.length) ? `<button class="btn sm ghost" data-act="script" aria-expanded="${open}">${IC.doc}${open ? 'Ocultar roteiro' : 'Roteiro'}</button>` : ''}
         <span class="spacer"></span>
         ${!isSub ? `<button class="btn sm" data-act="add-sub">${IC.plus}Subcena ${esc(nextSubNum(c))}</button>` : ''}
         ${isSub || c.manual ? (S.confirm === 'del-' + key ? `<div class="confirm">Excluir ${esc(u.numero)}? <button class="btn sm danger" data-act="del-unit-yes">Excluir</button><button class="btn sm" data-act="confirm-no">Não</button></div>` : `<button class="iconbtn" data-act="ask" data-c="del-${key}" aria-label="Excluir">${IC.trash}</button>`) : ''}
       </div>
-      ${prepOpen ? prepFields(u, 'up-' + u.id) : ''}
-      ${open ? scriptBlock(c) : ''}
+      ${prepFields(u, 'up-' + u.id)}
+      ${!isSub ? scriptBlock(c) : ''}
     </div>
     ${subs ? `<div class="subs">${subs}</div>` : ''}
   </article>`;
@@ -282,46 +321,29 @@ function notesList(notas, t) {
   </div>`).join('')}</div>`;
 }
 
-/* ---------- diária ---------- */
+/* ---------- day (plan of all videos recorded on the same date) ---------- */
 function renderDiaria() {
   const p = P(), d = Dd(); if (!p || !d) return go(p ? 'p-' + p.id : 'inicio');
-  setTop(`${diariaLabel(p, d)} · ${fmtDate(d.data)}`, `<button class="btn sm" data-act="go" data-h="p-${p.id}">${IC.back}<span>Projeto</span></button>`);
-  const tabs = [['plano', 'Plano'], ['set', 'Set'], ['dados', 'Local e equipe'], ['relatorio', 'Relatório']];
+  setTop(`Plano do dia · ${fmtDate(d.data)}`, `<button class="btn sm" data-act="go" data-h="p-${p.id}">${IC.back}<span>Projeto</span></button>`);
+  if (!['plano', 'set', 'relatorio'].includes(S.dtab)) S.dtab = 'plano';
+  const tabs = [['plano', 'Plano'], ['set', 'Set'], ['relatorio', 'Relatório do dia']];
   let body = '';
-  if (S.dtab === 'dados') body = diariaDados(p, d);
-  else if (S.dtab === 'plano') body = diariaPlano(p, d);
+  if (S.dtab === 'plano') body = diariaPlano(p, d);
   else if (S.dtab === 'relatorio') body = diariaRelatorio(p, d);
   else body = diariaSet(p, d);
+  const info = dayInfo(p, d);
   app().innerHTML = `<section class="stack">
-    <div><div class="eyebrow">${esc(projName(p))}</div><h1>${esc(diariaLabel(p, d))} · ${esc(weekday(d.data))} ${esc(fmtDate(d.data))}</h1>
-    <div class="kvline" style="margin-top:6px"><span><b>${esc(TIPO_L[d.tipo] || '—')}</b></span>${d.local ? `<span>${esc(d.local)}</span>` : ''}<span>Chegada <b>${esc(d.call || '—')}</b></span>${d.plano.length ? `<span>Término previsto <b>${planTimes(p, d).end}</b></span>` : ''}<span>${d.equipe.length} na equipe</span></div></div>
+    <div><div class="eyebrow">${esc(projName(p))}</div><h1>Plano do dia · ${esc(weekday(d.data))} ${esc(fmtDate(d.data))}</h1>
+    <div class="kvline" style="margin-top:6px">${info.tipos.length ? `<span><b>${esc(info.tipos.map(k => TIPO_L[k]).join(' / '))}</b></span>` : ''}${info.local ? `<span>${esc(info.local)}</span>` : ''}<span>Chegada <b>${esc(d.call || '—')}</b></span>${d.plano.length ? `<span>Término previsto <b>${planTimes(p, d).end}</b></span>` : ''}<span>${info.videos.length} vídeo${info.videos.length === 1 ? '' : 's'} nesta data</span>${info.equipe.length ? `<span>${info.equipe.length} na equipe</span>` : ''}</div></div>
     <div class="seg" role="tablist">${tabs.map(([k, l]) => `<button role="tab" aria-selected="${S.dtab === k}" data-act="dtab" data-v="${k}">${l}</button>`).join('')}</div>
     ${body}
   </section>`;
-}
-function diariaDados(p, d) {
-  const geo = d.geo ? `<span class="mono" style="font-size:12.5px">${d.geo.lat.toFixed(5)}, ${d.geo.lng.toFixed(5)} (±${Math.round(d.geo.acc || 0)} m)</span> <a href="${esc(mapsUrl(d))}" target="_blank" rel="noopener">Ver no mapa</a>` : '';
-  return `<div class="panel stack"><h3>Data e local</h3><div class="grid">
-      <div class="field"><label for="dd-data">Data</label><input class="inp" type="date" id="dd-data" data-dd="data" value="${esc(d.data)}"></div>
-      <div class="field"><label for="dd-tipo">Tipo de diária</label><select class="inp" id="dd-tipo" data-dd="tipo">${TIPOS_DIARIA.map(([k, l]) => `<option value="${k}" ${d.tipo === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-      <div class="field"><label for="dd-call">Chegada (call)</label><input class="inp mono" type="time" id="dd-call" data-dd="call" value="${esc(d.call)}"></div>
-      <div class="field"><label for="dd-local">Local</label><input class="inp" id="dd-local" data-dd="local" value="${esc(d.local)}" placeholder="Ex.: Estúdio Mooverama, Parque Ibirapuera…"></div>
-      <div class="field wide"><label for="dd-end">Endereço</label><input class="inp" id="dd-end" data-dd="endereco" value="${esc(d.endereco)}" placeholder="Rua, número, cidade"></div>
-      <div class="field wide"><div class="row"><button class="btn sm" data-act="geo">${IC.pin}${d.geo ? 'Atualizar localização' : 'Usar minha localização'}</button>${geo}${d.geo ? `<button class="iconbtn" data-act="geo-clear" aria-label="Remover localização">${IC.x}</button>` : ''}</div></div>
-      <div class="field wide"><label for="dd-obs">Observações da diária</label><textarea class="inp" id="dd-obs" data-dd="obs" rows="2">${esc(d.obs)}</textarea></div>
-    </div></div>
-    <div class="panel stack"><div class="row"><h3>Equipe do dia</h3><span class="spacer"></span>${p.diarias.length > 1 ? `<button class="btn sm" data-act="eq-copy">Copiar da diária anterior</button>` : ''}</div>
-      <datalist id="pessoas">${p.pessoas.map(pe => `<option value="${esc(pe.nome)}">`).join('')}</datalist>
-      ${d.equipe.length ? d.equipe.map(e => { const pe = p.pessoas.find(x => x.id === e.pessoaId); return `<div class="eqrow" data-eq="${e.id}"><input class="inp" list="pessoas" data-eq-f="nome" value="${esc(pe?.nome || '')}" placeholder="Nome" aria-label="Nome">${funcaoSelect(p, e.funcao, 'data-eq-f="funcao"', 'fn')}<button class="iconbtn" data-act="eq-del" aria-label="Remover">${IC.trash}</button></div>`; }).join('') : '<div class="muted" style="font-size:13.5px">Adicione quem trabalhou nesta diária e a função de cada um.</div>'}
-      <div class="row"><button class="btn sm" data-act="eq-add">${IC.plus}Pessoa</button>${p.pessoas.filter(pe => !d.equipe.some(e => e.pessoaId === pe.id)).slice(0, 12).map(pe => `<button class="chipbtn" data-act="eq-quick" data-pe="${pe.id}">+ ${esc(pe.nome)}</button>`).join('')}</div>
-    </div>
-    <div class="row"><span class="spacer"></span>${S.confirm === 'del-diaria' ? `<div class="confirm">Excluir esta diária? As marcações das cenas continuam nos vídeos. <button class="btn sm danger" data-act="del-diaria-yes">Excluir</button><button class="btn sm" data-act="confirm-no">Cancelar</button></div>` : `<button class="btn sm danger" data-act="ask" data-c="del-diaria">${IC.trash}Excluir diária</button>`}</div>`;
 }
 function diariaPlano(p, d) {
   const pt = planTimes(p, d);
   const nC = d.plano.filter(i => i.k === 'cena').length;
   if (!p.videos.length) return `<div class="empty"><strong>Sem vídeos no projeto</strong>Envie os roteiros na aba Vídeos do projeto para montar o plano.</div>`;
-  return `<div class="panel stack"><div class="plan-sum"><span>Chegada <b>${esc(d.call || '—')}</b></span><span>${nC} cena${nC === 1 ? '' : 's'}</span><span>Total <b>${durTxt(pt.total)}</b></span><span>Término previsto <b>${pt.end}</b></span></div>
+  return `<div class="panel stack"><div class="row"><div class="field" style="max-width:150px"><label for="dd-call">Chegada (call)</label><input class="inp mono" type="time" id="dd-call" data-dd="call" value="${esc(d.call)}"></div></div><div class="plan-sum"><span>${nC} cena${nC === 1 ? '' : 's'}</span><span>Total <b>${durTxt(pt.total)}</b></span><span>Término previsto <b>${pt.end}</b></span></div>
     <div class="row"><button class="btn primary" data-act="plan-add">${IC.plus}Cenas</button><button class="btn" data-act="plan-ev">${IC.plus}Evento</button><button class="btn" data-act="plan-group" ${nC < 2 ? 'disabled' : ''}>Agrupar por ambiente</button><span class="spacer"></span><button class="btn" data-act="pdf-ordem">${IC.down}Ordem do dia (PDF)</button></div></div>
     ${d.plano.length ? `<div class="strips" id="strips">${d.plano.map((it, i) => stripHtml(p, d, it, pt.items[i], i)).join('')}</div>
       <div class="muted" style="font-size:13px">Arraste pela alça <span style="display:inline-block;vertical-align:middle;width:16px">${IC.grip}</span> para reordenar. Toque na cena para editar ambiente, plano e tempo.</div>` : `<div class="empty"><strong>Plano vazio</strong>Toque em <b>+ Cenas</b> para escolher as cenas de um ou mais vídeos que serão gravadas neste dia.</div>`}`;
@@ -373,6 +395,17 @@ function renderProjectReport() {
   </section>`;
 }
 
+/* ---------- video report ---------- */
+function renderVideoReport() {
+  const p = P(), v = V(); if (!p || !v) return go(p ? 'p-' + p.id : 'inicio');
+  setTop(`Relatório · ${videoCode(p, v)}`, `<button class="btn sm" data-act="go" data-h="v-${p.id}-${v.id}">${IC.back}<span>Vídeo</span></button>`);
+  const media = m => m.thumb ? `<a ${m.driveLink ? `href="${esc(m.driveLink)}" target="_blank" rel="noopener"` : `href="#" data-act="media-view" data-m="${m.id}"`}><img src="${m.thumb}" alt="">${hhmm(m.criadaEm)}${m.legenda ? ' · ' + esc(m.legenda) : ''}</a>` : '';
+  app().innerHTML = `<section class="stack">
+    <div class="row"><button class="btn primary" data-act="pdf-video">${IC.down}Baixar PDF</button>${navigator.canShare ? `<button class="btn" data-act="share-video">${IC.share}Enviar PDF</button>` : ''}${drive.driveConfigured() ? `<button class="btn" data-act="sync">${IC.drive}Salvar no Drive</button>` : ''}</div>
+    <label class="row" style="gap:8px;font-size:14px"><input type="checkbox" id="hideEmpty" ${S.hideEmpty ? 'checked' : ''}> Ocultar cenas sem marcação</label>
+    ${videoReportHtml(p, v, { hideEmpty: S.hideEmpty, media, audio: n => n.audioId ? ` <button class="btn sm ghost" data-act="play" data-a="${n.audioId}">${IC.play}ouvir</button>` : '' })}
+  </section>`;
+}
 /* ---------- settings ---------- */
 function renderConfig() {
   setTop('Configurações', `<button class="btn sm" data-act="go" data-h="">${IC.back}<span>Projetos</span></button>`);
@@ -393,7 +426,7 @@ function renderConfig() {
     </div>
     <div class="panel stack"><h3>Armazenamento neste aparelho</h3><div class="muted" style="font-size:13.5px" id="storeInfo">Calculando…</div>
       <div class="row"><button class="btn" data-act="free-space">Liberar espaço (mídias já enviadas ao Drive)</button><button class="btn" data-act="import-backup">${IC.upload}Importar backup</button></div></div>
-    <div class="muted" style="font-size:12px">Relatório de Set · versão 2.0</div>
+    <div class="muted" style="font-size:12px">Relatório de Set · versão 2.1</div>
   </section>`;
   if (navigator.storage?.estimate) navigator.storage.estimate().then(e => { const el = $('#storeInfo'); if (el) el.textContent = `Usando ${fmtBytes(e.usage || 0)} de ${fmtBytes(e.quota || 0)} disponíveis no navegador.`; }).catch(() => {});
 }
@@ -402,7 +435,7 @@ function renderConfig() {
 function renderDock() {
   const dock = $('#dock');
   const p = P();
-  const show = (S.view === 'diaria' && S.dtab === 'set') || (S.view === 'video' && S.vmode === 'set');
+  const show = (S.view === 'diaria' && S.dtab === 'set') || S.view === 'video';
   if (!show || !p) { dock.hidden = true; document.body.classList.remove('has-dock'); return; }
   dock.hidden = false; document.body.classList.add('has-dock');
   const u = S.active ? findUnit(p, S.active) : null; const v = u ? findVideo(p, S.active.v) : null;
@@ -493,9 +526,9 @@ async function stopRecording(cancel) {
   let tgt = recState.target, msg = '';
   if (res.text && !recState.manual) { const r = resolveSpoken(p, res.text, tgt); if (r) { msg = r.msg; if (r.t) tgt = r.t; } }
   if (!tgt) tgt = { v: p.videos[0].id, c: null, s: null };
-  const note = { id: uid(), criadaEm: new Date(recState.t0).toISOString(), diariaId: currentDiariaId(p), duracaoMs: res.durationMs, texto: res.text, rascunho: res.text, audioId, mime: res.mime || '', transcricao: res.text ? 'navegador' : 'pendente' };
+  const note = { id: uid(), criadaEm: new Date(recState.t0).toISOString(), diariaId: currentDiariaId(p, tgt.v), duracaoMs: res.durationMs, texto: res.text, rascunho: res.text, audioId, mime: res.mime || '', transcricao: res.text ? 'navegador' : 'pendente' };
   const host = noteHost(p, tgt); host.notas.push(note);
-  if (tgt.c) { if (host.status === 'pendente') host.status = 'gravada'; touch(host, p); S.active = tgt; }
+  if (tgt.c) { if (host.status === 'pendente') host.status = 'gravada'; touch(host, p, tgt.v); S.active = tgt; }
   save(p, true);
   recState = { phase: 'revisao', noteRef: { t: tgt, n: note.id }, problems: res.problems, edited: false };
   render(); renderRecSheet();
@@ -533,7 +566,7 @@ function commitReview() {
   if (sel && !sameT(sel, recState.noteRef.t) && !(!sel.c && !recState.noteRef.t.c && sel.v === recState.noteRef.t.v)) {
     host.notas.splice(host.notas.indexOf(note), 1);
     const nh = noteHost(p, sel); nh.notas.push(note); nh.notas.sort((a, b) => a.criadaEm.localeCompare(b.criadaEm));
-    if (sel.c) { if (nh.status === 'pendente') nh.status = 'gravada'; touch(nh, p); S.active = sel; }
+    if (sel.c) { if (nh.status === 'pendente') nh.status = 'gravada'; touch(nh, p, sel.v); S.active = sel; }
     recState.noteRef.t = sel;
   }
   save(p);
@@ -561,7 +594,7 @@ async function aiTranscribeNote(p, note, fromReview) {
       if (!note.rascunho && !userEdited) {
         // nothing was captured live: try to route the note by what the AI heard
         const tgt = recState?.noteRef?.n === note.id ? recState.noteRef.t : null;
-        if (tgt && !tgt.c) { const r = resolveSpoken(p, text, tgt); if (r?.t) { const h = noteHost(p, tgt); h.notas.splice(h.notas.indexOf(note), 1); const nh = noteHost(p, r.t); nh.notas.push(note); if (nh.status === 'pendente') nh.status = 'gravada'; touch(nh, p); recState.noteRef.t = r.t; toast(r.msg); } }
+        if (tgt && !tgt.c) { const r = resolveSpoken(p, text, tgt); if (r?.t) { const h = noteHost(p, tgt); h.notas.splice(h.notas.indexOf(note), 1); const nh = noteHost(p, r.t); nh.notas.push(note); if (nh.status === 'pendente') nh.status = 'gravada'; touch(nh, p, r.t.v); recState.noteRef.t = r.t; toast(r.msg); } }
       }
     } else note.transcricao = prev === 'pendente' ? 'pendente' : 'navegador';
     delete note.erro;
@@ -607,9 +640,9 @@ async function addMediaFiles(files) {
 async function saveMedia(p, t, tipo, blob, info) {
   const id = uid(), blobId = 'm_' + id;
   await store.putBlob(blobId, blob);
-  const m = { id, tipo, mime: blob.type || (tipo === 'foto' ? 'image/jpeg' : 'video/webm'), criadaEm: nowIso(), legenda: '', v: t.v || null, c: t.c || null, s: t.s || null, diariaId: currentDiariaId(p), blobId, thumb: info.thumb || '', tw: info.tw || 0, th: info.th || 0, size: blob.size, dur: info.dur || 0 };
+  const m = { id, tipo, mime: blob.type || (tipo === 'foto' ? 'image/jpeg' : 'video/webm'), criadaEm: nowIso(), legenda: '', v: t.v || null, c: t.c || null, s: t.s || null, diariaId: currentDiariaId(p, t.v), blobId, thumb: info.thumb || '', tw: info.tw || 0, th: info.th || 0, size: blob.size, dur: info.dur || 0 };
   p.midias.push(m);
-  if (t.c) { const u = findUnit(p, t); if (u) touch(u, p); }
+  if (t.c) { const u = findUnit(p, t); if (u) touch(u, p, t.v); }
   save(p, true); render();
   return m;
 }
@@ -656,7 +689,7 @@ function openPicker(extra) {
   const inPlan = t => d.plano.some(i => i.k === 'cena' && sameT(i, t));
   const hideDone = S.pickHide !== false;
   sheet.open(`<div class="row"><h3>${extra ? 'Cena fora do plano' : 'Adicionar cenas ao plano'}</h3><span class="spacer"></span><label class="row" style="gap:6px;font-size:13px"><input type="checkbox" id="pickHide" ${hideDone ? 'checked' : ''}> Ocultar valendo</label></div>
-    <div class="picklist" id="picklist">${p.videos.map(v => `<div class="vh"><span class="vtag" style="--vc:${videoColor(p, v)}">${esc(videoCode(p, v))}</span>${esc(videoName(v))}</div>${v.cenas.flatMap(c => [{ u: c, t: { v: v.id, c: c.id, s: null } }, ...c.subcenas.map(s => ({ u: s, t: { v: v.id, c: c.id, s: s.id } }))]).filter(x => !hideDone || x.u.status !== 'valendo').map(x => { const dis = inPlan(x.t); return `<label class="${dis ? 'dis' : ''}"><input type="checkbox" value="${x.t.v}|${x.t.c}|${x.t.s || ''}" ${dis ? 'disabled checked' : ''}><span class="pn">${esc(x.u.numero)}</span><span class="pd">${esc([x.u.prep?.ambiente, x.u.prep?.plano, x.t.s ? x.u.descricao : excerpt(v.cenas.find(c => c.id === x.t.c))].filter(Boolean).join(' · '))}${x.u.status !== 'pendente' ? ` · ${STATUS_L[x.u.status]}` : ''}</span></label>`; }).join('')}`).join('')}</div>
+    <div class="picklist" id="picklist">${[...dayVideos(p, d), ...p.videos.filter(x => !dayVideos(p, d).includes(x))].map(v => `<div class="vh"><span class="vtag" style="--vc:${videoColor(p, v)}">${esc(videoCode(p, v))}</span>${esc(videoName(v))}</div>${v.cenas.flatMap(c => [{ u: c, t: { v: v.id, c: c.id, s: null } }, ...c.subcenas.map(s => ({ u: s, t: { v: v.id, c: c.id, s: s.id } }))]).filter(x => !hideDone || x.u.status !== 'valendo').map(x => { const dis = inPlan(x.t); return `<label class="${dis ? 'dis' : ''}"><input type="checkbox" value="${x.t.v}|${x.t.c}|${x.t.s || ''}" ${dis ? 'disabled checked' : ''}><span class="pn">${esc(x.u.numero)}</span><span class="pd">${esc([x.u.prep?.ambiente, x.u.prep?.plano, x.t.s ? x.u.descricao : excerpt(v.cenas.find(c => c.id === x.t.c))].filter(Boolean).join(' · '))}${x.u.status !== 'pendente' ? ` · ${STATUS_L[x.u.status]}` : ''}</span></label>`; }).join('')}`).join('')}</div>
     <div class="row"><button class="btn sm" data-act="pick-all">Marcar todas visíveis</button><span class="spacer"></span><button class="btn" data-act="sheet-close">Cancelar</button><button class="btn primary" data-act="pick-ok">Adicionar</button></div>`);
 }
 function openEventPicker() {
@@ -816,32 +849,56 @@ document.addEventListener('click', async e => {
     case 'new-project': { const np = newProject(); S.projetos.push(np); save(np, true); S.ptab = 'videos'; go('p-' + np.id); break; }
     case 'ptab': S.ptab = b.dataset.v; render(); break;
     case 'dtab': S.dtab = b.dataset.v; S.confirm = null; render(); break;
-    case 'vmode': S.vmode = b.dataset.v; render(); break;
+
     case 'repkind': S.repKind = b.dataset.v; render(); break;
     case 'filter': S.filter = b.dataset.v; render(); break;
     case 'ask': S.confirm = b.dataset.c; render(); break;
     case 'confirm-no': S.confirm = null; render(); break;
     case 'del-project-yes': { S.projetos = S.projetos.filter(x => x.id !== p.id); await store.delProject(p.id); go(''); toast('Projeto excluído deste aparelho.'); break; }
     case 'del-video-yes': { p.videos = p.videos.filter(x => x.id !== S.vId); for (const dd of p.diarias) dd.plano = dd.plano.filter(i => i.k !== 'cena' || i.v !== S.vId); save(p, true); go('p-' + p.id); break; }
-    case 'del-diaria-yes': { p.diarias = p.diarias.filter(x => x.id !== d.id); save(p, true); go('p-' + p.id); break; }
+
     case 'add-docx': fileInput('.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document', null, true, fs => importDocx(fs)); break;
-    case 'add-video-manual': { const v = newVideo(); v.cab.titulo = 'Vídeo ' + (p.videos.length + 1); for (let i = 1; i <= 5; i++) { const c = newCena(i); c.manual = true; v.cenas.push(c); } v.cab.cenas = '5'; p.videos.push(v); save(p, true); go(`v-${p.id}-${v.id}`); toast('Vídeo criado com 5 cenas. Ajuste o cabeçalho e adicione cenas se precisar.'); break; }
+    case 'add-video-manual': { const v = newVideo(); prefillFicha(p, v); v.cab.titulo = 'Vídeo ' + (p.videos.length + 1); for (let i = 1; i <= 5; i++) { const c = newCena(i); c.manual = true; v.cenas.push(c); } v.cab.cenas = '5'; p.videos.push(v); save(p, true); go(`v-${p.id}-${v.id}`); toast('Vídeo criado com 5 cenas. Ajuste o cabeçalho e adicione cenas se precisar.'); break; }
     case 'add-cena': { const v = V(); const max = Math.max(0, ...v.cenas.map(c => parseInt(c.numero, 10) || 0)); const c = newCena(max + 1); c.manual = true; c.stamps = ['adicionada']; v.cenas.push(c); save(p); render(); toast(`Cena ${c.numero} adicionada.`); break; }
-    case 'new-diaria': { const nd = newDiaria(); const last = [...p.diarias].sort((a, b2) => (b2.data || '').localeCompare(a.data || ''))[0]; if (last) { nd.tipo = last.tipo; nd.local = last.local; nd.endereco = last.endereco; nd.call = last.call; } p.diarias.push(nd); save(p, true); S.dtab = 'dados'; go(`d-${p.id}-${nd.id}`); break; }
+
     case 'add-pessoa': p.pessoas.push({ id: uid(), nome: '', funcao: '' }); save(p); render(); $$('[data-pe-f="nome"]').pop()?.focus(); break;
-    case 'del-pessoa': { const id = b.closest('[data-pe]').dataset.pe; p.pessoas = p.pessoas.filter(x => x.id !== id); for (const dd of p.diarias) dd.equipe = dd.equipe.filter(e2 => e2.pessoaId !== id); save(p); render(); break; }
-    case 'eq-add': d.equipe.push({ id: uid(), pessoaId: null, funcao: '' }); save(p); render(); $$('[data-eq-f="nome"]').pop()?.focus(); break;
-    case 'eq-quick': { const pe = p.pessoas.find(x => x.id === b.dataset.pe); d.equipe.push({ id: uid(), pessoaId: pe.id, funcao: pe.funcao || '' }); save(p); render(); break; }
-    case 'eq-del': { const id = b.closest('[data-eq]').dataset.eq; d.equipe = d.equipe.filter(x => x.id !== id); save(p); render(); break; }
-    case 'eq-copy': { const prev = [...p.diarias].filter(x => x.id !== d.id && (x.data || '') <= (d.data || '')).sort((a, b2) => (b2.data || '').localeCompare(a.data || ''))[0] || p.diarias.find(x => x.id !== d.id); if (prev) { for (const e2 of prev.equipe) if (!d.equipe.some(x => x.pessoaId === e2.pessoaId)) d.equipe.push({ id: uid(), pessoaId: e2.pessoaId, funcao: e2.funcao }); save(p); render(); toast(`Equipe copiada da ${diariaLabel(p, prev)}.`); } break; }
+    case 'del-pessoa': { const id = b.closest('[data-pe]').dataset.pe; p.pessoas = p.pessoas.filter(x => x.id !== id); for (const v of p.videos) v.ficha.equipe = v.ficha.equipe.filter(e2 => e2.pessoaId !== id); save(p); render(); break; }
+    case 'eq-add': V().ficha.equipe.push({ id: uid(), pessoaId: null, funcao: '' }); S.fichaOpen = true; save(p); render(); $$('[data-eq-f="nome"]').pop()?.focus(); break;
+    case 'eq-quick': { const pe = p.pessoas.find(x => x.id === b.dataset.pe); V().ficha.equipe.push({ id: uid(), pessoaId: pe.id, funcao: pe.funcao || '' }); S.fichaOpen = true; save(p); render(); break; }
+    case 'eq-del': { const id = b.closest('[data-eq]').dataset.eq; const f = V().ficha; f.equipe = f.equipe.filter(x => x.id !== id); S.fichaOpen = true; save(p); render(); break; }
+    case 'eq-copy': { const v = V(); const src = [...p.videos].filter(x => x !== v && x.ficha.equipe.length).sort((a, b2) => (b2.ficha.data || '').localeCompare(a.ficha.data || ''))[0]; if (src) { for (const e2 of src.ficha.equipe) if (!v.ficha.equipe.some(x => x.pessoaId === e2.pessoaId)) v.ficha.equipe.push({ id: uid(), pessoaId: e2.pessoaId, funcao: e2.funcao }); S.fichaOpen = true; save(p); render(); toast(`Equipe copiada de ${videoCode(p, src)}.`); } break; }
+    case 'eqp-add': { V().ficha.equipamentos.push({ id: uid(), cat: 'Câmera', item: '', qtd: 1 }); S.fichaOpen = true; save(p); render(); $$('[data-eqp-f="item"]').pop()?.focus(); break; }
+    case 'eqp-del': { const id = b.closest('[data-eqp]').dataset.eqp; const f = V().ficha; f.equipamentos = f.equipamentos.filter(x => x.id !== id); S.fichaOpen = true; save(p); render(); break; }
+    case 'kit-save-ok': { const nome = ($('#kitName')?.value || '').trim() || 'Kit ' + (S.kits.length + 1); const itens = V().ficha.equipamentos.filter(e2 => e2.item.trim()).map(({ cat, item, qtd }) => ({ cat, item, qtd })); S.kits.push({ id: uid(), nome, itens }); await store.setMeta('kits', S.kits); S.confirm = null; S.fichaOpen = true; render(); toast(`Kit “${nome}” salvo neste aparelho.`); break; }
+    case 'ficha-all-yes': { const src = V().ficha; for (const x of p.videos) { if (x === V()) continue; Object.assign(x.ficha, { data: src.data, tipo: src.tipo, local: src.local, endereco: src.endereco, geo: src.geo ? { ...src.geo } : null, equipe: src.equipe.map(e2 => ({ ...e2, id: uid() })), equipamentos: src.equipamentos.map(e2 => ({ ...e2, id: uid() })), formato: src.formato ? { ...src.formato } : null }); } if (src.data) ensureDay(p, src.data); S.confirm = null; save(p, true); render(); toast(`Ficha aplicada a ${p.videos.length - 1} vídeo(s).`); break; }
+    case 'prep-all': openPrepAll(tFromEl(b)); break;
+    case 'prep-all-ok': applyPrepAll(); break;
+    case 'script-edit': { S.editScript = tFromEl(b).c; render(); setTimeout(() => $(`#se-txt-${S.editScript}`)?.focus(), 50); break; }
+    case 'script-cancel': S.editScript = null; render(); break;
+    case 'script-save': case 'script-restore': {
+      const t = tFromEl(b); const c = findUnit(p, { v: t.v, c: t.c });
+      if (act === 'script-restore') { if (c.original) { Object.assign(c, { imagem: c.original.imagem, texto: c.original.texto, imagemTxt: c.original.imagemTxt, textoTxt: c.original.textoTxt }); delete c.original; c.stamps = c.stamps.filter(k => k !== 'dialogo'); } }
+      else {
+        const img = $(`#se-img-${c.id}`).value.replace(/\s+$/g, ''), txt = $(`#se-txt-${c.id}`).value.replace(/\s+$/g, '');
+        if (img !== (c.imagemTxt || '') || txt !== (c.textoTxt || '')) {
+          if (!c.original) c.original = { imagem: c.imagem, texto: c.texto, imagemTxt: c.imagemTxt || '', textoTxt: c.textoTxt || '', em: nowIso() };
+          if (img !== (c.imagemTxt || '')) { c.imagemTxt = img; c.imagem = textToHtml(img); }
+          if (txt !== (c.textoTxt || '')) { c.textoTxt = txt; c.texto = textToHtml(txt); }
+          if (c.original.imagemTxt === c.imagemTxt && c.original.textoTxt === c.textoTxt) { delete c.original; c.stamps = c.stamps.filter(k => k !== 'dialogo'); }
+          else { if (!c.stamps.includes('dialogo')) c.stamps.push('dialogo'); touch(c, p, t.v); }
+        }
+      }
+      S.editScript = null; save(p); render(); toast(act === 'script-restore' ? 'Texto original restaurado.' : 'Texto do roteiro atualizado. O original fica guardado no relatório.'); break;
+    }
+    case 'pdf-video': case 'share-video': { const v = V(); await savePdf(`${videoCode(p, v)} – Relatório – ${slug(projName(p))}.pdf`, videoReportPdf(p, v, { hideEmpty: S.hideEmpty }), act === 'share-video'); break; }
     case 'geo': {
       if (!navigator.geolocation) { toast('Este navegador não informa a localização.'); break; }
       b.disabled = true; b.textContent = 'Localizando…';
-      navigator.geolocation.getCurrentPosition(pos => { d.geo = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, em: nowIso() }; save(p); render(); toast('Localização registrada.'); },
+      navigator.geolocation.getCurrentPosition(pos => { S.fichaOpen = true; V().ficha.geo = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, em: nowIso() }; save(p); render(); toast('Localização registrada.'); },
         err => { toast(err.code === 1 ? 'A localização foi bloqueada. Libere nas permissões do site.' : 'Não foi possível obter a localização.'); render(); }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
       break;
     }
-    case 'geo-clear': d.geo = null; save(p); render(); break;
+    case 'geo-clear': V().ficha.geo = null; save(p); render(); break;
     case 'select': { S.active = tFromEl(b); render(); break; }
     case 'rec': { const t = tFromEl(b); S.active = t; renderDock(); $$('.scene.active,.sub.active').forEach(el => el.classList.remove('active')); b.closest('[data-c]').classList.add('active'); startRecording(t, true); break; }
     case 'rec-dock': startRecording(null, false); break;
@@ -849,10 +906,10 @@ document.addEventListener('click', async e => {
     case 'rec-stop': stopRecording(false); break;
     case 'rec-cancel': stopRecording(true); break;
     case 'sheet-close': if (recState?.phase === 'revisao') commitReview(); sheet.close(); render(); break;
-    case 'status': { const t = tFromEl(b); const u = findUnit(p, t); u.status = b.dataset.val; touch(u); save(p); render(); break; }
-    case 'stamp': { const t = tFromEl(b); const u = findUnit(p, t); const k = b.dataset.val; u.stamps = u.stamps.includes(k) ? u.stamps.filter(s => s !== k) : [...u.stamps, k]; touch(u); save(p); render(); break; }
+    case 'status': { const t = tFromEl(b); const u = findUnit(p, t); u.status = b.dataset.val; touch(u, p, t.v); save(p); render(); break; }
+    case 'stamp': { const t = tFromEl(b); const u = findUnit(p, t); const k = b.dataset.val; u.stamps = u.stamps.includes(k) ? u.stamps.filter(s => s !== k) : [...u.stamps, k]; touch(u, p, t.v); save(p); render(); break; }
     case 'stamps-open': { const t = tFromEl(b); const key = `${t.v}|${t.c}|${t.s || ''}`; S.openStamps.has(key) ? S.openStamps.delete(key) : S.openStamps.add(key); render(); break; }
-    case 'prep-toggle': { const t = tFromEl(b); const key = `${t.v}|${t.c}|${t.s || ''}`; S.openPrep.has(key) ? S.openPrep.delete(key) : S.openPrep.add(key); render(); break; }
+
     case 'script': { const t = tFromEl(b); S.openScript.has(t.c) ? S.openScript.delete(t.c) : S.openScript.add(t.c); render(); break; }
     case 'add-sub': { const t = tFromEl(b); const c = findUnit(p, { v: t.v, c: t.c }); const s = newUnit(nextSubNum(c), { descricao: '' }); s.stamps = ['adicionada']; s.prep = { ...c.prep, tempo: '' }; c.subcenas.push(s); S.active = { v: t.v, c: t.c, s: s.id }; save(p); render(); toast(`Subcena ${s.numero} criada.`); break; }
     case 'del-unit-yes': { const t = tFromEl(b); const v = findVideo(p, t.v); if (t.s) { const c = v.cenas.find(x => x.id === t.c); c.subcenas = c.subcenas.filter(s => s.id !== t.s); } else v.cenas = v.cenas.filter(c => c.id !== t.c); for (const dd of p.diarias) dd.plano = dd.plano.filter(i => i.k !== 'cena' || !(i.v === t.v && i.c === t.c && (!t.s || i.s === t.s))); if (S.active && sameT(S.active, t)) S.active = null; S.confirm = null; save(p); render(); break; }
@@ -862,7 +919,7 @@ document.addEventListener('click', async e => {
     case 'rev-again': { const t = commitReview(); sheet.close(); render(); startRecording(t && t.c ? t : null, !!(t && t.c)); break; }
     case 'rev-del': { const { host, note } = findNote(p, recState.noteRef); if (note) { if (note.audioId) store.delBlob(note.audioId); host.notas.splice(host.notas.indexOf(note), 1); save(p); } sheet.close(); render(); toast('Nota excluída.'); break; }
     case 'retranscribe': { const { note } = findNote(p, recState.noteRef); if (note) { note.transcricao = 'navegador'; aiTranscribeNote(p, note, true); } break; }
-    case 'sug': { const u = findUnit(p, recState.noteRef.t); if (!u) break; const k = b.dataset.k, val = b.dataset.val; if (k === 'arq') u.arquivos = [u.arquivos.trim(), val].filter(Boolean).join('\n'); if (k === 'st') u.status = val; if (k === 'stamp' && !u.stamps.includes(val)) u.stamps.push(val); touch(u); b.disabled = true; b.textContent = 'Feito'; save(p); break; }
+    case 'sug': { const u = findUnit(p, recState.noteRef.t); if (!u) break; const k = b.dataset.k, val = b.dataset.val; if (k === 'arq') { if (camCount(u) > 1) { u.arquivosCam ||= {}; const n = camCount(u); let L = null; for (let i = 0; i < n; i++) { const c0 = camLetter(i); if (!(u.arquivosCam[c0] ?? (i === 0 ? u.arquivos : '')).trim()) { L = c0; break; } } L ||= 'A'; u.arquivosCam[L] = [(u.arquivosCam[L] || '').trim(), val].filter(Boolean).join(', '); } else u.arquivos = [u.arquivos.trim(), val].filter(Boolean).join('\n'); } if (k === 'st') u.status = val; if (k === 'stamp' && !u.stamps.includes(val)) u.stamps.push(val); touch(u, p, recState.noteRef.t.v); b.disabled = true; b.textContent = 'Feito'; save(p); break; }
     case 'media': { const t = b.dataset.general ? { v: null, c: null, s: null } : b.dataset.dock ? (S.active || {}) : tFromEl(b); openMediaSheet(t); break; }
     case 'cap-photo': fileInput('image/*', 'environment', false, fs => addMediaFiles(fs)); break;
     case 'cap-gallery': fileInput('image/*,video/*', null, true, fs => addMediaFiles(fs)); break;
@@ -887,7 +944,7 @@ document.addEventListener('click', async e => {
     case 'pdf-rel': case 'share-rel': await savePdf(`${d.data} ${diariaLabel(p, d)} – Relatório – ${slug(projName(p))}.pdf`, diariaReportPdf(p, d), act === 'share-rel'); break;
     case 'pdf-proj': case 'share-proj': await savePdf(`Relatório do projeto – ${slug(projName(p))}.pdf`, projectReportPdf(p, { hideEmpty: S.hideEmpty }), act === 'share-proj'); break;
     case 'copy-text': { const txt = diariaText(p, d); try { await navigator.clipboard.writeText(txt); toast('Texto do relatório copiado.'); } catch { toast('Não foi possível copiar neste navegador.'); } break; }
-    case 'open-rel': S.repKind = b.dataset.k; S.dtab = 'relatorio'; S.dId = b.dataset.d; go(`d-${p.id}-${b.dataset.d}`); break;
+    case 'open-day': { const d0 = ensureDay(p, b.dataset.date); const k = b.dataset.k; S.dtab = k === 'plano' ? 'plano' : 'relatorio'; S.repKind = k === 'ordem' ? 'ordem' : 'relatorio'; S.dId = d0.id; save(p, true); go(`d-${p.id}-${d0.id}`); break; }
     case 'sync': syncProject(p, true); break;
     case 'drive-on': try { await drive.connect(true); toast('Google Drive conectado.'); } catch (err) { toast(err.message); } render(); break;
     case 'drive-off': drive.disconnect(); render(); break;
@@ -915,19 +972,23 @@ document.addEventListener('input', e => {
   if (el.dataset.pj) { p[el.dataset.pj] = el.value; save(p); if (el.dataset.pj === 'nome' || el.dataset.pj === 'produtora') $('#crumb').textContent = projName(p); return; }
   if (el.dataset.cab) { V().cab[el.dataset.cab] = el.value; save(p); return; }
   if (el.dataset.dd) { const d = Dd(); d[el.dataset.dd] = el.value; save(p); return; }
+  if (el.dataset.fi) { V().ficha[el.dataset.fi] = el.value; save(p); return; }
+  if (el.dataset.eqpF) { const f = V().ficha; const row = f.equipamentos.find(x => x.id === el.closest('[data-eqp]').dataset.eqp); row[el.dataset.eqpF] = el.dataset.eqpF === 'qtd' ? Math.max(1, +el.value || 1) : el.value; save(p); return; }
+  if (el.dataset.ucam) { const t = tFromEl(el); const u = findUnit(p, t); u.arquivosCam ||= {}; if (!('A' in u.arquivosCam) && u.arquivos) u.arquivosCam.A = u.arquivos; u.arquivosCam[el.dataset.ucam] = el.value; if (el.value.trim()) touch(u, p, t.v); save(p); return; }
+  if (el.dataset.pjf === 'resCustom' || el.dataset.vff === 'resCustom') { const f = el.dataset.pjf ? p.formato : V().ficha.formato; f.res = el.value.replace(/\s/g, '').replace(/[×X]/g, 'x'); save(p); return; }
   if (el.dataset.peF === 'nome') { const pe = p.pessoas.find(x => x.id === el.closest('[data-pe]').dataset.pe); pe.nome = el.value; save(p); return; }
   if (el.dataset.eqF === 'nome') {
-    const d = Dd(); const row = d.equipe.find(x => x.id === el.closest('[data-eq]').dataset.eq);
+    const v = V(); const row = v.ficha.equipe.find(x => x.id === el.closest('[data-eq]').dataset.eq);
     const name = el.value.trim(); let pe = p.pessoas.find(x => x.nome.trim().toLowerCase() === name.toLowerCase() && name);
     const cur = p.pessoas.find(x => x.id === row.pessoaId);
     if (pe && pe !== cur) { row.pessoaId = pe.id; if (!row.funcao && pe.funcao) { row.funcao = pe.funcao; const sel = el.closest('[data-eq]').querySelector('select'); if (sel) sel.value = pe.funcao; } }
-    else if (cur && !p.diarias.some(dd => dd !== d && dd.equipe.some(x => x.pessoaId === cur.id))) cur.nome = el.value;
+    else if (cur && !p.videos.some(x => x !== v && x.ficha.equipe.some(y => y.pessoaId === cur.id))) cur.nome = el.value;
     else if (name) { pe = { id: uid(), nome: el.value, funcao: row.funcao || '' }; p.pessoas.push(pe); row.pessoaId = pe.id; }
     save(p); return;
   }
   if (el.dataset.ev) { const d = Dd(); const i = +el.closest('.strip').dataset.i; d.plano[i][el.dataset.ev] = el.dataset.ev === 'min' ? Math.max(0, +el.value || 0) : el.value; save(p); return; }
   if (el.dataset.prep) { const t = tFromEl(el); const u = findUnit(p, t); u.prep ||= {}; u.prep[el.dataset.prep] = el.value; if (el.dataset.prep === 'tempo') delete u.prep.pos; save(p); return; }
-  if (el.dataset.u) { const t = tFromEl(el); const u = findUnit(p, t); if (u) { u[el.dataset.u] = el.value; if (el.dataset.u === 'arquivos' && el.value.trim()) touch(u); save(p); } autoGrow(el); }
+  if (el.dataset.u) { const t = tFromEl(el); const u = findUnit(p, t); if (u) { u[el.dataset.u] = el.value; if (el.dataset.u === 'arquivos' && el.value.trim()) touch(u, p, t.v); save(p); } autoGrow(el); }
 });
 document.addEventListener('change', e => {
   const el = e.target; const p = P();
@@ -945,16 +1006,61 @@ document.addEventListener('change', e => {
     }
     applyFuncao(p, el.closest('[data-pe],[data-eq]'), val); return;
   }
-  if (el.dataset.dd === 'tipo') render();
+  if (el.dataset.fi === 'data') { const v = V(); if (v.ficha.data) ensureDay(p, v.ficha.data); save(p); S.fichaOpen = true; render(); return; }
+  if (el.dataset.fi === 'tipo') { S.fichaOpen = true; render(); return; }
+  if (el.dataset.prep === 'cameras') { render(); return; }
+  if (el.id === 'kitLoad' && el.value) { const k = S.kits.find(x => x.id === el.value); const f = V().ficha; for (const it of k.itens) if (!f.equipamentos.some(e2 => e2.item === it.item)) f.equipamentos.push({ id: uid(), ...it }); S.fichaOpen = true; save(p); render(); toast(`Kit “${k.nome}” carregado.`); return; }
+  if (el.id === 'fiFmtOwn') { const f = V().ficha; f.formato = el.checked ? { ...(p.formato || { orient: 'H', res: '1920x1080', fps: '' }) } : null; S.fichaOpen = true; save(p); render(); return; }
+  if (el.dataset.pjf || el.dataset.vff) {
+    const key = el.dataset.pjf || el.dataset.vff; if (key === 'resCustom') return;
+    const f = el.dataset.pjf ? (p.formato ||= { orient: 'H', res: '1920x1080', fps: '' }) : V().ficha.formato;
+    if (key === 'res' && el.value === '__outra') { f._custom = true; f.res = ''; }
+    else { f[key] = el.value; if (key === 'res') delete f._custom; if (key === 'orient') { f.res = (RESOLUCOES[el.value] || [])[0] || ''; delete f._custom; } }
+    if (!el.dataset.pjf) S.fichaOpen = true;
+    save(p); render(); return;
+  }
 });
 function applyFuncao(p, row, val) {
   if (row.dataset.pe) { const pe = p.pessoas.find(x => x.id === row.dataset.pe); pe.funcao = val; }
-  else { const d = Dd(); const r = d.equipe.find(x => x.id === row.dataset.eq); r.funcao = val; const pe = p.pessoas.find(x => x.id === r.pessoaId); if (pe && !pe.funcao) pe.funcao = val; }
+  else { const r = V().ficha.equipe.find(x => x.id === row.dataset.eq); r.funcao = val; const pe = p.pessoas.find(x => x.id === r.pessoaId); if (pe && !pe.funcao) pe.funcao = val; }
   save(p);
 }
 function autoGrow(el) { if (el.tagName !== 'TEXTAREA') return; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, 320) + 'px'; }
 document.addEventListener('focusin', e => { if (e.target.tagName === 'TEXTAREA') autoGrow(e.target); });
 
+// a new video starts with the recording sheet of the most recent video (same day, team and set is the usual case)
+function prefillFicha(p, v) {
+  const src = [...p.videos].filter(x => x.ficha?.data || x.ficha?.equipe?.length).sort((a, b) => (b.ficha.data || '').localeCompare(a.ficha.data || ''))[0];
+  if (!src) return;
+  const f = src.ficha;
+  v.ficha = { ...newFicha(), data: f.data, tipo: f.tipo, local: f.local, endereco: f.endereco, geo: f.geo ? { ...f.geo } : null, equipe: f.equipe.map(e => ({ ...e, id: uid() })), equipamentos: f.equipamentos.map(e => ({ ...e, id: uid() })), formato: f.formato ? { ...f.formato } : null };
+}
+/* ---------- prep: apply to all ---------- */
+const PREP_KEYS = [['ambiente', 'Ambiente'], ['intext', 'INT/EXT'], ['periodo', 'Período'], ['plano', 'Plano'], ['cameras', 'Câmeras'], ['elenco', 'Elenco'], ['necessidades', 'Necessidades']];
+let prepSrc = null;
+function openPrepAll(t) {
+  const p = P(); const u = findUnit(p, t); if (!u) return; prepSrc = t;
+  const pr = u.prep || {};
+  sheet.open(`<h3>Aplicar a preparação da cena ${esc(u.numero)}</h3>
+    <div class="field"><label>Campos a copiar</label><div class="stack" style="gap:4px">${PREP_KEYS.map(([k, l]) => `<label class="row" style="gap:8px"><input type="checkbox" name="pk" value="${k}" ${pr[k] ? 'checked' : ''}> ${l}: <b>${esc(k === 'cameras' ? String(camCount(u)) : (pr[k] || '—'))}</b></label>`).join('')}</div><span class="muted" style="font-size:12.5px">O tempo de cada cena não é copiado.</span></div>
+    <div class="field"><label>Aplicar em</label><label class="row" style="gap:8px"><input type="radio" name="pscope" value="video" checked> Todas as cenas deste vídeo</label>${p.videos.length > 1 ? `<label class="row" style="gap:8px"><input type="radio" name="pscope" value="projeto"> Todas as cenas de todos os vídeos do projeto</label>` : ''}</div>
+    <div class="field"><label>Como</label><label class="row" style="gap:8px"><input type="radio" name="pmode" value="vazios" checked> Só preencher campos vazios</label><label class="row" style="gap:8px"><input type="radio" name="pmode" value="todos"> Substituir o que já estiver preenchido</label></div>
+    <div class="row"><span class="spacer"></span><button class="btn" data-act="sheet-close">Cancelar</button><button class="btn primary" data-act="prep-all-ok">Aplicar</button></div>`);
+}
+function applyPrepAll() {
+  const p = P(); const src = findUnit(p, prepSrc); if (!src) return sheet.close();
+  const keys = $$('input[name="pk"]:checked').map(x => x.value);
+  const scope = ($('input[name="pscope"]:checked') || {}).value || 'video';
+  const all = ($('input[name="pmode"]:checked') || {}).value === 'todos';
+  const vids = scope === 'projeto' ? p.videos : [findVideo(p, prepSrc.v)];
+  let n = 0;
+  for (const v of vids) for (const u of units(v)) {
+    if (u === src) continue; u.prep ||= {}; let ch = false;
+    for (const k of keys) { const val = k === 'cameras' ? String(camCount(src)) : (src.prep[k] || ''); if (!val) continue; if (all || !u.prep[k] || (k === 'cameras' && !u.prep.cameras)) { if (u.prep[k] !== val) { u.prep[k] = val; ch = true; } } }
+    if (ch) n++;
+  }
+  save(p, true); sheet.close(); render(); toast(n ? `Preparação aplicada em ${n} cena${n > 1 ? 's' : ''}.` : 'Nenhuma cena precisou ser alterada.');
+}
 /* ---------- docx import ---------- */
 async function importDocx(files) {
   const p = P(); if (!p) return;
@@ -964,13 +1070,13 @@ async function importDocx(files) {
       if (!/\.docx$/i.test(f.name)) throw new Error('Envie o roteiro em .docx (Word).');
       const v = await parseDocx(f);
       for (const c of v.cenas) { c.prep = c.prep || {}; c.diarias = c.diarias || []; suggestPrep(c); }
-      p.videos.push(v); last = v;
+      prefillFicha(p, v); p.videos.push(v); last = v;
       if (!p.agencia && v.cab.cliente) p.agencia = v.cab.cliente;
       toast(`${v.cab.codigo || f.name}: ${v.cenas.length} cenas importadas.`);
     } catch (err) { toast(`${f.name}: ${err.message || err}`, 6000); }
   }
   save(p, true);
-  if (last && files.length === 1) { S.vmode = 'prep'; go(`v-${p.id}-${last.id}`); } else render();
+  if (last && files.length === 1) go(`v-${p.id}-${last.id}`); else render();
 }
 
 /* ---------- backup (without Drive) ---------- */
@@ -995,13 +1101,23 @@ function normalizeProject(p) {
   p.videos ||= []; p.diarias ||= []; p.pessoas ||= []; p.funcoesExtras ||= []; p.midias ||= []; p.drive ||= {};
   for (const v of p.videos) { v.notas ||= []; v.preambulo ||= []; for (const c of v.cenas) { c.subcenas ||= []; c.complementos ||= []; for (const u of [c, ...c.subcenas]) { u.stamps ||= []; u.notas ||= []; u.prep ||= {}; u.diarias ||= []; } } }
   for (const d of p.diarias) { d.equipe ||= []; d.plano ||= []; }
+  if ((p.v || 2) < 3) {
+    // v2 -> v3: place, team and date move from the diária to each video's recording sheet
+    for (const v of p.videos) {
+      const used = p.diarias.filter(d => d.plano.some(i => i.k === 'cena' && i.v === v.id) || units(v).some(u => u.diarias.includes(d.id))).sort((a, b) => (a.data || '').localeCompare(b.data || ''));
+      const d = used[0] || (p.diarias.length === 1 ? p.diarias[0] : null);
+      v.ficha = { ...newFicha(), ...(d ? { data: d.data, tipo: d.tipo || 'estudio', local: d.local || '', endereco: d.endereco || '', geo: d.geo || null, equipe: (d.equipe || []).map(e => ({ ...e, id: uid() })), obs: d.obs || '' } : {}) };
+    }
+    p.formato ||= null; p.v = 3;
+  }
+  for (const v of p.videos) { v.ficha ||= newFicha(); v.ficha.equipe ||= []; v.ficha.equipamentos ||= []; }
   return p;
 }
-
 /* ============================== boot ============================== */
 (async function boot() {
   try { navigator.storage?.persist?.().catch(() => {}); } catch {}
   try { S.projetos = (await store.allProjects()).map(normalizeProject); } catch { S.projetos = []; }
+  try { S.kits = (await store.getMeta('kits')) || []; } catch { S.kits = []; }
   const migrated = await migrateV1(newProject, newDiaria);
   if (migrated.length) { for (const p of migrated) { normalizeProject(p); S.projetos.push(p); await store.putProject(clone(p)); } toast(`${migrated.length} diária(s) da versão anterior viraram projetos.`); }
   route();

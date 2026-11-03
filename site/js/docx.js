@@ -1,10 +1,11 @@
 import { esc, uid, nowIso } from './util.js';
 // Reads the agency .docx (header + CENA / IMAGEM / TEXTO table) with no external libraries
 
-export const newPrep = () => ({ ambiente: '', intext: '', periodo: '', plano: '', tempo: '', elenco: '', necessidades: '' });
+export const newPrep = () => ({ ambiente: '', intext: '', periodo: '', plano: '', tempo: '', cameras: '', elenco: '', necessidades: '' });
 export const newUnit = (numero, extra = {}) => ({ id: uid(), numero: String(numero), status: 'pendente', stamps: [], arquivos: '', obs: '', notas: [], prep: newPrep(), diarias: [], ...extra });
 export const newCena = numero => newUnit(numero, { imagem: '', texto: '', imagemTxt: '', textoTxt: '', complementos: [], subcenas: [] });
-export const newVideo = () => ({ id: uid(), arquivo: '', cab: { codigo: '', cliente: '', titulo: '', data: '', duracao: '', cenas: '', versao: '' }, preambulo: [], cenas: [], notas: [], criadoEm: nowIso() });
+export const newFicha = () => ({ data: '', tipo: 'estudio', local: '', endereco: '', geo: null, equipe: [], equipamentos: [], obs: '', formato: null });
+export const newVideo = () => ({ id: uid(), ficha: newFicha(), arquivo: '', cab: { codigo: '', cliente: '', titulo: '', data: '', duracao: '', cenas: '', versao: '' }, preambulo: [], cenas: [], notas: [], criadoEm: nowIso() });
 
 async function readZip(buf) {
   const dv = new DataView(buf), u8 = new Uint8Array(buf);
@@ -191,7 +192,7 @@ export function suggestPrep(c) {
   const soPos = !falado && /(lettering|anima[çc][ãa]o|logo|vinheta|arte|meme|trecho do filme|tela de transi)/i.test(img);
   if (!p.plano) p.plano = first || (soPos ? 'Lettering / arte' : '');
   if (!p.ambiente && /est[úu]dio/i.test(img)) p.ambiente = 'Estúdio';
-  if (!p.elenco) { const m = txt.match(/^([A-ZÀ-Ú][A-ZÀ-Ú ]{2,30})(?:\s*\([^)]*\))?:/m); if (m) p.elenco = m[1].trim().replace(/\b\w/g, ch => ch).toLowerCase().replace(/^./, ch => ch.toUpperCase()); }
+  if (!p.elenco) { const m = txt.match(/^([A-ZÀ-Ú][A-ZÀ-Ú ]{2,30})(?:\s*\([^)]*\))?:/m); if (m) p.elenco = m[1].trim().toLowerCase().replace(/^./, ch => ch.toUpperCase()); }
   if (soPos) { p.pos = true; if (!p.tempo) p.tempo = '0'; }
   return p;
 }

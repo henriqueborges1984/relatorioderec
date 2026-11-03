@@ -1,13 +1,23 @@
 // Reports: on-screen HTML and PDF (call sheet, diária report, project report)
-import { esc, fmtDate, weekday, hhmm, ymdOf, durTxt, STATUS_L, STAMP_L, TIPO_L, EVENTO_L, FUNCOES } from './util.js';
+import { esc, fmtDate, weekday, hhmm, ymdOf, durTxt, STATUS_L, STAMP_L, TIPO_L, EVENTO_L, FUNCOES, ORIENTACOES } from './util.js';
 import { MiniPdf, wrapText, textW, dataUrlToBytes } from './minipdf.js';
-import { projName, videoName, videoCode, videoColor, findUnit, findVideo, hasMarks, unitExcerpt, planTimes, diariaLabel, unitsDoneIn, sameT, units, counts, allPessoasFuncoes } from './model.js';
+import { projName, videoName, videoCode, videoColor, findUnit, findVideo, hasMarks, unitExcerpt, planTimes, diariaLabel, unitsDoneIn, sameT, units, counts, allPessoasFuncoes, dayInfo, arquivosText, formatoOf, camCount } from './model.js';
 
 const ORDER = FUNCOES.flatMap(g => g[1]);
 const roleRank = f => { const i = ORDER.indexOf(f); return i < 0 ? 999 : i; };
 export const mapsUrl = d => d.geo ? `https://www.google.com/maps?q=${d.geo.lat},${d.geo.lng}` : (d.endereco || d.local) ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([d.endereco, d.local].filter(Boolean).join(', '))}` : '';
 export const equipeSorted = (p, d) => d.equipe.map(e => ({ ...e, pessoa: p.pessoas.find(x => x.id === e.pessoaId) })).filter(e => e.pessoa && e.pessoa.nome).sort((a, b) => roleRank(a.funcao) - roleRank(b.funcao) || a.pessoa.nome.localeCompare(b.pessoa.nome));
 const notesOf = (u, dId) => dId ? u.notas.filter(n => !n.diariaId || n.diariaId === dId) : u.notas;
+export const fmtFormato = f => f ? [((ORIENTACOES.find(o => o[0] === f.orient) || [])[1]), f.res && f.res.replace('x', ' × ') + ' px', f.fps && f.fps + ' fps'].filter(Boolean).join(' · ') : '';
+const cenaOf = (p, t) => { const v = findVideo(p, t.v); return v ? v.cenas.find(c => c.id === t.c) : null; };
+// script text changed on set (only on the main scene, not on subcenas)
+function scriptChange(p, t) {
+  if (t.s) return null; const c = cenaOf(p, t); if (!c || !c.original) return null;
+  const out = [];
+  if ((c.original.textoTxt || '') !== (c.textoTxt || '')) out.push({ k: 'TEXTO', novo: c.textoTxt || '', orig: c.original.textoTxt || '' });
+  if ((c.original.imagemTxt || '') !== (c.imagemTxt || '')) out.push({ k: 'IMAGEM', novo: c.imagemTxt || '', orig: c.original.imagemTxt || '' });
+  return out.length ? out : null;
+}
 const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 const tLabel = (p, t) => { const v = findVideo(p, t.v); const u = findUnit(p, t); return { v, u, code: v ? videoCode(p, v) : '?', num: u ? u.numero : '?' }; };
 
@@ -38,16 +48,17 @@ function unitRow(p, t, o, extraFirst = '') {
   const meds = (p.midias || []).filter(m => sameT(m, t) && (!o.dId || m.diariaId === o.dId));
   return `<tr class="${t.s ? 'rsub' : ''} ${hasMarks(u) ? '' : 'dim'}">${extraFirst}<td class="n"><span class="vtag" style="--vc:${videoColor(p, v)}">${esc(code)}</span>${esc(u.numero)}</td>
     <td>${pill(u.status)}<div>${stampsHtml(u)}</div></td>
-    <td class="mono" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(u.arquivos) || '<span class="muted">—</span>'}</td>
-    <td>${t.s && u.descricao ? `<div class="muted">${esc(u.descricao)}</div>` : ''}${u.obs ? `<div style="white-space:pre-wrap">${esc(u.obs)}</div>` : ''}${notes ? `<ul class="rn">${notes}</ul>` : ''}${meds.length ? `<div class="rthumbs">${meds.map(m => o.media ? o.media(m) : '').join('')}</div>` : ''}${!u.obs && !notes && !meds.length && !(t.s && u.descricao) ? '<span class="muted">—</span>' : ''}</td></tr>`;
+    <td class="mono" style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(arquivosText(u)) || '<span class="muted">—</span>'}${camCount(u) > 1 ? `<div class="muted" style="font-family:var(--f-body);font-size:11.5px">${camCount(u)} câmeras</div>` : ''}</td>
+    <td>${t.s && u.descricao ? `<div class="muted">${esc(u.descricao)}</div>` : ''}${(scriptChange(p, t) || []).map(ch => `<div class="chg"><b>${ch.k} alterado no set:</b> <span style="white-space:pre-wrap">${esc(ch.novo)}</span><div class="muted"><s style="white-space:pre-wrap">${esc(ch.orig)}</s></div></div>`).join('')}${u.obs ? `<div style="white-space:pre-wrap">${esc(u.obs)}</div>` : ''}${notes ? `<ul class="rn">${notes}</ul>` : ''}${meds.length ? `<div class="rthumbs">${meds.map(m => o.media ? o.media(m) : '').join('')}</div>` : ''}${!u.obs && !notes && !meds.length && !(t.s && u.descricao) && !scriptChange(p, t) ? '<span class="muted">—</span>' : ''}</td></tr>`;
 }
 function headHtml(p, d, title) {
-  const eq = equipeSorted(p, d); const pt = planTimes(p, d); const mu = mapsUrl(d);
-  return `<header class="rep-h"><div class="eyebrow">${esc(title)} · ${esc(diariaLabel(p, d))} · ${esc(weekday(d.data))} ${esc(fmtDate(d.data))}</div>
+  const info = dayInfo(p, d); const eq = equipeSorted(p, info); const pt = planTimes(p, d); const mu = mapsUrl(info);
+  return `<header class="rep-h"><div class="eyebrow">${esc(title)} · ${esc(weekday(d.data))} ${esc(fmtDate(d.data))}</div>
     <h1>${esc(projName(p))}</h1>
-    <div class="kv"><span><b>Tipo:</b> ${esc(TIPO_L[d.tipo] || '—')}</span>${d.local ? `<span><b>Local:</b> ${esc(d.local)}</span>` : ''}${d.endereco ? `<span><b>Endereço:</b> ${esc(d.endereco)}</span>` : ''}${mu ? `<span><a href="${esc(mu)}" target="_blank" rel="noopener">Abrir no mapa</a></span>` : ''}<span><b>Chegada:</b> ${esc(d.call || '—')}</span>${d.plano.length ? `<span><b>Término previsto:</b> ${pt.end}</span>` : ''}</div>
-    ${d.obs ? `<div style="white-space:pre-wrap;font-size:14px">${esc(d.obs)}</div>` : ''}
+    <div class="kv"><span><b>Tipo:</b> ${esc(info.tipos.map(k => TIPO_L[k]).join(' / ') || '—')}</span>${info.local ? `<span><b>Local:</b> ${esc(info.local)}</span>` : ''}${info.endereco ? `<span><b>Endereço:</b> ${esc(info.endereco)}</span>` : ''}${mu ? `<span><a href="${esc(mu)}" target="_blank" rel="noopener">Abrir no mapa</a></span>` : ''}<span><b>Chegada:</b> ${esc(d.call || '—')}</span>${d.plano.length ? `<span><b>Término previsto:</b> ${pt.end}</span>` : ''}${p.formato ? `<span><b>Formato:</b> ${esc(fmtFormato(p.formato))}</span>` : ''}</div>
+    ${info.obs ? `<div style="white-space:pre-wrap;font-size:14px">${esc(info.obs)}</div>` : ''}
     ${eq.length ? `<div class="eqgrid">${eq.map(e => `<div><span class="muted">${esc(e.funcao || '—')}</span><b>${esc(e.pessoa.nome)}</b></div>`).join('')}</div>` : ''}
+    ${info.equipamentos.length ? `<div class="kv" style="font-size:13px"><b>Equipamentos:</b> ${esc(info.equipamentos.map(e => `${e.qtd > 1 ? e.qtd + '× ' : ''}${e.item}`).join(', '))}</div>` : ''}
   </header>`;
 }
 export function callSheetHtml(p, d) {
@@ -58,7 +69,7 @@ export function callSheetHtml(p, d) {
     const { v, u, code } = tLabel(p, it); if (!u) return '';
     const pr = u.prep || {};
     return `<tr><td class="mono">${tm.start}</td><td class="n"><span class="vtag" style="--vc:${videoColor(p, v)}">${esc(code)}</span>${esc(u.numero)}</td>
-      <td>${esc(pr.ambiente || '—')}<div class="muted">${esc([pr.intext, pr.periodo].filter(Boolean).join(' · '))}</div></td><td>${esc(pr.plano || '—')}</td>
+      <td>${esc(pr.ambiente || '—')}<div class="muted">${esc([pr.intext, pr.periodo].filter(Boolean).join(' · '))}</div></td><td>${esc(pr.plano || '—')}${camCount(u) > 1 ? `<div class="muted">${camCount(u)} câmeras</div>` : ''}</td>
       <td>${esc(unitExcerpt(p, it))}${pr.elenco ? `<div class="muted">Elenco: ${esc(pr.elenco)}</div>` : ''}${pr.necessidades ? `<div class="muted">Precisa: ${esc(pr.necessidades)}</div>` : ''}</td><td class="mono">${durTxt(tm.dur)}</td></tr>`;
   }).join('');
   const vids = [...new Set(d.plano.filter(i => i.k === 'cena').map(i => i.v))].map(id => findVideo(p, id)).filter(Boolean);
@@ -90,14 +101,14 @@ export function projectReportHtml(p, o = {}) {
   const ds = [...p.diarias].sort((a, b) => (a.data || '').localeCompare(b.data || ''));
   return `<article class="rep"><header class="rep-h"><div class="eyebrow">Relatório do projeto</div><h1>${esc(projName(p))}</h1>
     <div class="kv">${p.agencia ? `<span><b>Agência/cliente:</b> ${esc(p.agencia)}</span>` : ''}<span><b>Vídeos:</b> ${p.videos.length}</span><span><b>Diárias:</b> ${p.diarias.length}</span>${p.drive?.folderLink ? `<span><a href="${esc(p.drive.folderLink)}" target="_blank" rel="noopener">Pasta no Drive</a></span>` : ''}</div>
-    ${ds.length ? `<div class="kv">${ds.map(d => `<span><b>${esc(diariaLabel(p, d))}</b> ${esc(fmtDate(d.data))} · ${esc(TIPO_L[d.tipo] || '')}${d.local ? ' · ' + esc(d.local) : ''}</span>`).join('')}</div>` : ''}
+    ${p.formato ? `<div class="kv"><span><b>Formato:</b> ${esc(fmtFormato(p.formato))}</span></div>` : ''}
     ${p.obs ? `<div style="white-space:pre-wrap;font-size:14px">${esc(p.obs)}</div>` : ''}</header>
-    ${p.videos.map(v => { const c = counts(v); return `<section class="rep-r"><div class="rh"><span class="vtag" style="--vc:${videoColor(p, v)}">${esc(videoCode(p, v))}</span><h2>${esc(videoName(v))}</h2><span class="muted" style="font-size:13px">${esc([v.cab.versao, v.cab.duracao && 'Duração ' + v.cab.duracao].filter(Boolean).join(' · '))}</span><span class="spacer"></span><span class="mono" style="font-size:12.5px">${c.valendo}/${c.total} valendo</span></div>
+    ${p.videos.map(v => { const c = counts(v); return `<section class="rep-r"><div class="rh"><span class="vtag" style="--vc:${videoColor(p, v)}">${esc(videoCode(p, v))}</span><h2>${esc(videoName(v))}</h2><span class="muted" style="font-size:13px">${esc([v.cab.versao, v.cab.duracao && 'Duração ' + v.cab.duracao, v.ficha?.data && 'Gravado em ' + fmtDate(v.ficha.data), v.ficha?.local].filter(Boolean).join(' · '))}</span><span class="spacer"></span><span class="mono" style="font-size:12.5px">${c.valendo}/${c.total} valendo</span></div>
       <div class="rtab"><table><thead><tr><th>Cena</th><th>Status</th><th>Arquivo aprovado</th><th>Observações, notas e mídias</th></tr></thead><tbody>
       ${v.cenas.flatMap(cn => [{ v: v.id, c: cn.id, s: null }, ...cn.subcenas.map(s => ({ v: v.id, c: cn.id, s: s.id }))]).filter(t => !o.hideEmpty || hasMarks(findUnit(p, t))).map(t => unitRow(p, t, o)).join('')}
       </tbody></table></div>
       ${v.notas.length ? `<div><div class="eyebrow">Notas gerais</div><ul class="rn">${v.notas.map(n => noteLi(n, o)).join('')}</ul></div>` : ''}</section>`; }).join('')}
-    ${eq.length ? `<section class="rep-r"><div class="rh"><h2>Equipe</h2></div><div class="rtab"><table><thead><tr><th>Nome</th><th>Função</th><th>Diárias</th></tr></thead><tbody>${eq.map(r => `<tr><td><b>${esc(r.pessoa.nome)}</b></td><td>${esc([...r.funcoes].join(', ') || '—')}</td><td class="mono">${esc(r.dias.map(d => fmtDate(d.data).slice(0, 5)).join(', '))}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
+    ${eq.length ? `<section class="rep-r"><div class="rh"><h2>Equipe</h2></div><div class="rtab"><table><thead><tr><th>Nome</th><th>Função</th><th>Datas</th></tr></thead><tbody>${eq.map(r => `<tr><td><b>${esc(r.pessoa.nome)}</b></td><td>${esc([...r.funcoes].join(', ') || '—')}</td><td class="mono">${esc(r.dias.map(d => fmtDate(d).slice(0, 5)).join(', '))}</td></tr>`).join('')}</tbody></table></div></section>` : ''}
   </article>`;
 }
 
@@ -176,14 +187,20 @@ class Doc {
   }
 }
 function pdfHeader(D, p, d, title) {
-  D.eyebrow(`${title.toUpperCase()}  ·  ${diariaLabel(p, d).toUpperCase()}  ·  ${weekday(d.data).toUpperCase()} ${fmtDate(d.data)}`);
+  D.eyebrow(`${title.toUpperCase()}  ·  ${weekday(d.data).toUpperCase()} ${fmtDate(d.data)}`);
   D.para(projName(p), 'HB', 19, INK, 22);
   D.y += 2;
-  const pt = planTimes(p, d); const mu = mapsUrl(d);
-  D.para([`Tipo: ${TIPO_L[d.tipo] || '—'}`, d.local && 'Local: ' + d.local, d.endereco && 'Endereço: ' + d.endereco, `Chegada: ${d.call || '—'}`, d.plano.length && `Término previsto: ${pt.end}`].filter(Boolean).join('   ·   '), 'H', 9.3, MUTE, 12.5);
+  const info = dayInfo(p, d); const pt = planTimes(p, d);
+  pdfInfoBlock(D, p, info, [`Chegada: ${d.call || '—'}`, d.plano.length && `Término previsto: ${pt.end}`], p.formato);
+  D.y += 8; D.rule(); D.y += 10;
+}
+// location, team and equipment block (used by day and video reports)
+function pdfInfoBlock(D, p, info, extra = [], formato) {
+  const mu = mapsUrl(info);
+  D.para([`Tipo: ${(info.tipos || [info.tipo]).map(k => TIPO_L[k]).filter(Boolean).join(' / ') || '—'}`, info.local && 'Local: ' + info.local, info.endereco && 'Endereço: ' + info.endereco, ...extra, formato && 'Formato: ' + fmtFormato(formato)].filter(Boolean).join('   ·   '), 'H', 9.3, MUTE, 12.5);
   if (mu) D.para('Abrir local no mapa', 'H', 8.5, [45, 95, 168], 12, D.M, 200, mu);
-  if (d.obs) { D.y += 2; D.para(d.obs, 'H', 9.3, INK, 12.5); }
-  const eq = equipeSorted(p, d);
+  if (info.obs) { D.y += 2; D.para(info.obs, 'H', 9.3, INK, 12.5); }
+  const eq = equipeSorted(p, info);
   if (eq.length) {
     D.y += 6; D.P.text(D.M, D.y + 7, 'EQUIPE', { font: 'HB', size: 6.8, color: MUTE }); D.y += 12;
     const colW = (D.W - 2 * D.M) / 3; let i = 0; const rowsN = Math.ceil(eq.length / 3);
@@ -192,14 +209,17 @@ function pdfHeader(D, p, d, title) {
     eq.forEach((e, k) => { const col = Math.floor(k / rowsN), row = k % rowsN; const x = D.M + col * colW, y = y0 + row * 21; D.P.text(x, y + 7, e.funcao || '—', { size: 6.8, color: MUTE }); D.P.text(x, y + 16.5, e.pessoa.nome, { font: 'HB', size: 8.6, color: INK }); i++; });
     D.y = y0 + rowsN * 21;
   }
-  D.y += 8; D.rule(); D.y += 10;
+  if (info.equipamentos?.length) { D.y += 6; D.P.text(D.M, D.y + 7, 'EQUIPAMENTOS', { font: 'HB', size: 6.8, color: MUTE }); D.y += 11; D.para(info.equipamentos.map(e => `${e.qtd > 1 ? e.qtd + '× ' : ''}${e.item}${e.cat ? ' (' + e.cat + ')' : ''}`).join('  ·  '), 'H', 8.6, INK, 11.5); }
 }
 const unitPdfCells = (p, t, dId, withDate) => {
   const { v, u, code } = tLabel(p, t);
   const st = [{ t: STATUS_L[u.status], f: 'HB', c: ST[u.status] }, ...u.stamps.map(k => ({ t: STAMP_L[k].toUpperCase(), f: 'HB', s: 6.8, c: SC[k] }))];
-  const arq = (u.arquivos || '').trim() ? (u.arquivos.trim().split('\n').map(l => ({ t: l, f: 'C', s: 8 }))) : [{ t: '—', c: MUTE }];
+  const at = arquivosText(u);
+  const arq = at ? at.split('\n').map(l => ({ t: l, f: 'C', s: 8 })) : [{ t: '—', c: MUTE }];
+  if (camCount(u) > 1) arq.push({ t: `${camCount(u)} câmeras`, s: 7, c: MUTE });
   const notes = [];
   if (t.s && u.descricao) notes.push({ t: u.descricao, f: 'HO', c: MUTE });
+  for (const ch of scriptChange(p, t) || []) { notes.push({ t: `${ch.k} alterado no set: ${ch.novo}`, f: 'HB', s: 8, c: [122, 62, 177] }); notes.push({ t: `Original: ${ch.orig}`, f: 'HO', s: 7.6, c: MUTE }); }
   if ((u.obs || '').trim()) notes.push({ t: u.obs.trim() });
   for (const n of notesOf(u, dId)) notes.push({ t: `${withDate ? fmtDate(ymdOf(n.criadaEm)).slice(0, 5) + ' ' : ''}${hhmm(n.criadaEm)}  ${n.texto || '(áudio sem transcrição)'}`, f: n.texto ? 'H' : 'HO', x: 7, dot: true });
   const meds = (p.midias || []).filter(m => sameT(m, t) && (!dId || m.diariaId === dId));
@@ -221,7 +241,7 @@ export function callSheetPdf(p, d) {
     const tm = pt.items[i];
     if (it.k === 'ev') return { span: (it.titulo || EVENTO_L[it.tipo]).toUpperCase(), lead: tm.start, tail: durTxt(tm.dur), fill: [238, 240, 236] };
     const { v, u, code } = tLabel(p, it); if (!u) return null; const pr = u.prep || {};
-    return { cells: [[{ t: tm.start, f: 'C', s: 8.6 }], [{ t: u.numero, tag: code, tagColor: hexRgb(videoColor(p, v)), raw: true }], [{ t: pr.ambiente || '—' }, ...([pr.intext, pr.periodo].filter(Boolean).length ? [{ t: [pr.intext, pr.periodo].filter(Boolean).join(' · '), c: MUTE, s: 7.6 }] : [])], [{ t: pr.plano || '—' }], [{ t: unitExcerpt(p, it) || '—' }, ...(pr.elenco ? [{ t: 'Elenco: ' + pr.elenco, c: MUTE, s: 7.6 }] : []), ...(pr.necessidades ? [{ t: 'Precisa: ' + pr.necessidades, c: MUTE, s: 7.6 }] : [])], [{ t: durTxt(tm.dur), f: 'C', s: 8.2 }]] };
+    return { cells: [[{ t: tm.start, f: 'C', s: 8.6 }], [{ t: u.numero, tag: code, tagColor: hexRgb(videoColor(p, v)), raw: true }], [{ t: pr.ambiente || '—' }, ...([pr.intext, pr.periodo].filter(Boolean).length ? [{ t: [pr.intext, pr.periodo].filter(Boolean).join(' · '), c: MUTE, s: 7.6 }] : [])], [{ t: pr.plano || '—' }, ...(camCount(u) > 1 ? [{ t: camCount(u) + ' câmeras', c: MUTE, s: 7.6 }] : [])], [{ t: unitExcerpt(p, it) || '—' }, ...(pr.elenco ? [{ t: 'Elenco: ' + pr.elenco, c: MUTE, s: 7.6 }] : []), ...(pr.necessidades ? [{ t: 'Precisa: ' + pr.necessidades, c: MUTE, s: 7.6 }] : [])], [{ t: durTxt(tm.dur), f: 'C', s: 8.2 }]] };
   }).filter(Boolean);
   if (rows.length) D.table(cols, rows); else D.para('Nenhuma cena no plano.', 'HO', 9, MUTE, 12);
   D.y += 8; D.para(`Total previsto: ${durTxt(pt.total)} · término às ${pt.end}`, 'HB', 9, INK, 12);
@@ -251,7 +271,7 @@ export function projectReportPdf(p, o = {}) {
   D.para(projName(p), 'HB', 19, INK, 22);
   D.para([p.agencia && 'Agência/cliente: ' + p.agencia, `Vídeos: ${p.videos.length}`, `Diárias: ${p.diarias.length}`, `Gerado em ${new Date().toLocaleString('pt-BR')}`].filter(Boolean).join('   ·   '), 'H', 9.3, MUTE, 12.5);
   if (p.drive?.folderLink) D.para('Pasta do projeto no Google Drive', 'H', 8.5, [45, 95, 168], 12, D.M, 200, p.drive.folderLink);
-  for (const d of [...p.diarias].sort((a, b) => (a.data || '').localeCompare(b.data || ''))) D.para(`${diariaLabel(p, d)} · ${fmtDate(d.data)} · ${TIPO_L[d.tipo] || ''}${d.local ? ' · ' + d.local : ''}`, 'H', 8.6, INK, 11.5);
+  if (p.formato) D.para('Formato: ' + fmtFormato(p.formato), 'H', 8.6, INK, 11.5);
   if (p.obs) { D.y += 3; D.para(p.obs, 'H', 9, INK, 12); }
   D.y += 8; D.rule(); D.y += 8;
   const W = D.W - 2 * D.M;
@@ -259,7 +279,7 @@ export function projectReportPdf(p, o = {}) {
   for (const v of p.videos) {
     const c = counts(v);
     D.need(80); D.y += 4;
-    D.P.text(D.M, D.y + 8, [videoCode(p, v), v.cab.versao, v.cab.duracao && 'Duração ' + v.cab.duracao].filter(Boolean).join('  ·  '), { font: 'C', size: 8.4, color: MUTE });
+    D.P.text(D.M, D.y + 8, [videoCode(p, v), v.cab.versao, v.cab.duracao && 'Duração ' + v.cab.duracao, v.ficha?.data && 'Gravado em ' + fmtDate(v.ficha.data)].filter(Boolean).join('  ·  '), { font: 'C', size: 8.4, color: MUTE });
     D.P.text(D.W - D.M, D.y + 8, `${c.valendo}/${c.total} valendo`, { font: 'C', size: 8.4, color: MUTE, align: 'right' });
     D.y += 13; D.para(videoName(v), 'HB', 13, INK, 16); D.y += 2;
     const rows = v.cenas.flatMap(cn => [{ v: v.id, c: cn.id, s: null }, ...cn.subcenas.map(s => ({ v: v.id, c: cn.id, s: s.id }))]).filter(t => !o.hideEmpty || hasMarks(findUnit(p, t))).map(t => { const x = unitPdfCells(p, t, null, true); return { cells: [[{ t: (t.s ? '  ' : '') + x.u.numero, f: 'HB', s: t.s ? 9.5 : 11.5, c: hasMarks(x.u) ? INK : MUTE }], x.st, x.arq, x.notes] }; });
@@ -268,22 +288,62 @@ export function projectReportPdf(p, o = {}) {
     D.y += 14;
   }
   const eq = allPessoasFuncoes(p);
-  if (eq.length) { D.section('Equipe'); D.table([{ t: 'NOME', w: 170 }, { t: 'FUNÇÃO', w: 200 }, { t: 'DIÁRIAS', w: W - 370 }], eq.map(r => ({ cells: [[{ t: r.pessoa.nome, f: 'HB' }], [{ t: [...r.funcoes].join(', ') || '—' }], [{ t: r.dias.map(d => fmtDate(d.data).slice(0, 5)).join(', '), f: 'C', s: 8 }]] }))); }
+  if (eq.length) { D.section('Equipe'); D.table([{ t: 'NOME', w: 170 }, { t: 'FUNÇÃO', w: 200 }, { t: 'DATAS', w: W - 370 }], eq.map(r => ({ cells: [[{ t: r.pessoa.nome, f: 'HB' }], [{ t: [...r.funcoes].join(', ') || '—' }], [{ t: r.dias.map(d => fmtDate(d).slice(0, 5)).join(', ') || '—', f: 'C', s: 8 }]] }))); }
   const meds = mediaThumbs(p, p.midias || []);
   if (meds.length) { D.section('Fotos e vídeos', `${meds.length} ${meds.length === 1 ? 'item' : 'itens'}`); D.thumbs(meds); }
   return D.finish(`Relatório do projeto – ${projName(p)}`);
 }
 
+/* ------------------------------ video report ------------------------------ */
+const videoInfo = v => ({ ...v.ficha, tipos: [v.ficha?.tipo].filter(Boolean), equipe: v.ficha?.equipe || [], equipamentos: v.ficha?.equipamentos || [] });
+const videoTargets = v => v.cenas.flatMap(cn => [{ v: v.id, c: cn.id, s: null }, ...cn.subcenas.map(s => ({ v: v.id, c: cn.id, s: s.id }))]);
+export function videoReportHtml(p, v, o = {}) {
+  o = { ...o, showDate: false };
+  const info = videoInfo(v); const eq = equipeSorted(p, info); const mu = mapsUrl(info); const c = counts(v);
+  const meds = (p.midias || []).filter(m => m.v === v.id && !m.c);
+  return `<article class="rep"><header class="rep-h"><div class="eyebrow">Relatório do vídeo${v.ficha?.data ? ` · ${esc(weekday(v.ficha.data))} ${esc(fmtDate(v.ficha.data))}` : ''}</div>
+    <h1><span class="vtag" style="--vc:${videoColor(p, v)};font-size:14px">${esc(videoCode(p, v))}</span>${esc(videoName(v))}</h1>
+    <div class="kv"><span><b>Projeto:</b> ${esc(projName(p))}</span>${v.cab.versao ? `<span><b>Versão:</b> ${esc(v.cab.versao)}</span>` : ''}${v.cab.duracao ? `<span><b>Duração:</b> ${esc(v.cab.duracao)}</span>` : ''}<span><b>Tipo:</b> ${esc(TIPO_L[info.tipo] || '—')}</span>${info.local ? `<span><b>Local:</b> ${esc(info.local)}</span>` : ''}${info.endereco ? `<span><b>Endereço:</b> ${esc(info.endereco)}</span>` : ''}${mu ? `<span><a href="${esc(mu)}" target="_blank" rel="noopener">Abrir no mapa</a></span>` : ''}${formatoOf(p, v) ? `<span><b>Formato:</b> ${esc(fmtFormato(formatoOf(p, v)))}</span>` : ''}<span class="mono">${c.valendo}/${c.total} valendo</span></div>
+    ${info.obs ? `<div style="white-space:pre-wrap;font-size:14px">${esc(info.obs)}</div>` : ''}
+    ${eq.length ? `<div class="eqgrid">${eq.map(e => `<div><span class="muted">${esc(e.funcao || '—')}</span><b>${esc(e.pessoa.nome)}</b></div>`).join('')}</div>` : ''}
+    ${info.equipamentos.length ? `<div class="kv" style="font-size:13px"><b>Equipamentos:</b> ${esc(info.equipamentos.map(e => `${e.qtd > 1 ? e.qtd + '× ' : ''}${e.item}`).join(', '))}</div>` : ''}
+  </header>
+  <section class="rep-r"><div class="rtab"><table><thead><tr><th>Cena</th><th>Status</th><th>Arquivo aprovado</th><th>Observações, notas e mídias</th></tr></thead><tbody>
+    ${videoTargets(v).filter(t => !o.hideEmpty || hasMarks(findUnit(p, t))).map(t => unitRow(p, t, o)).join('')}
+  </tbody></table></div>
+  ${v.notas.length ? `<div><div class="eyebrow">Notas gerais</div><ul class="rn">${v.notas.map(n => noteLi(n, o)).join('')}</ul></div>` : ''}
+  ${meds.length ? `<div><div class="eyebrow">Fotos e vídeos do vídeo</div><div class="rthumbs">${meds.map(m => o.media ? o.media(m) : '').join('')}</div></div>` : ''}
+  </section></article>`;
+}
+export function videoReportPdf(p, v, o = {}) {
+  const D = new Doc(`${projName(p)} · ${videoCode(p, v)} · Relatório do vídeo`);
+  D.eyebrow(`RELATÓRIO DO VÍDEO${v.ficha?.data ? `  ·  ${weekday(v.ficha.data).toUpperCase()} ${fmtDate(v.ficha.data)}` : ''}`);
+  D.para(videoName(v), 'HB', 17, INK, 20);
+  D.para([projName(p), videoCode(p, v), v.cab.versao, v.cab.duracao && 'Duração ' + v.cab.duracao].filter(Boolean).join('   ·   '), 'H', 9.3, MUTE, 12.5);
+  pdfInfoBlock(D, p, videoInfo(v), [], formatoOf(p, v));
+  D.y += 8; D.rule(); D.y += 10;
+  const c = counts(v);
+  D.section('Cenas', `${c.valendo}/${c.total} valendo`);
+  const W = D.W - 2 * D.M;
+  const cols = [{ t: 'CENA', w: 56 }, { t: 'STATUS', w: 84 }, { t: 'ARQUIVO APROVADO', w: 110 }, { t: 'OBSERVAÇÕES E NOTAS', w: W - 56 - 84 - 110 }];
+  D.table(cols, videoTargets(v).filter(t => !o.hideEmpty || hasMarks(findUnit(p, t))).map(t => { const x = unitPdfCells(p, t, null, false); return { cells: [[{ t: (t.s ? '  ' : '') + x.u.numero, f: 'HB', s: t.s ? 9.5 : 11.5, c: hasMarks(x.u) ? INK : MUTE }], x.st, x.arq, x.notes] }; }));
+  if (v.notas.length) { D.section('Notas gerais'); for (const n of v.notas) D.para(`•  ${hhmm(n.criadaEm)}  ${n.texto || '(áudio sem transcrição)'}`, 'H', 8.6, INK, 11.5); }
+  const meds = mediaThumbs(p, (p.midias || []).filter(m => m.v === v.id));
+  if (meds.length) { D.section('Fotos e vídeos', `${meds.length} ${meds.length === 1 ? 'item' : 'itens'}`); D.thumbs(meds); }
+  return D.finish(`Relatório ${videoCode(p, v)} – ${projName(p)}`);
+}
+
 /* ------------------------------ text ------------------------------ */
 export function diariaText(p, d) {
-  const L = [`RELATÓRIO DE GRAVAÇÃO — ${diariaLabel(p, d)} · ${fmtDate(d.data)}`, projName(p), `${TIPO_L[d.tipo] || ''}${d.local ? ' · ' + d.local : ''}`];
-  const eq = equipeSorted(p, d); if (eq.length) L.push('', 'Equipe: ' + eq.map(e => `${e.pessoa.nome} (${e.funcao || '—'})`).join(', '));
-  if (d.obs) L.push('', d.obs);
+  const info = dayInfo(p, d);
+  const L = [`RELATÓRIO DE GRAVAÇÃO — ${fmtDate(d.data)}`, projName(p), `${info.tipos.map(k => TIPO_L[k]).join(' / ')}${info.local ? ' · ' + info.local : ''}`];
+  const eq = equipeSorted(p, info); if (eq.length) L.push('', 'Equipe: ' + eq.map(e => `${e.pessoa.nome} (${e.funcao || '—'})`).join(', '));
+  if (info.obs) L.push('', info.obs);
   const pr = planRows(p, d); const ts = [...pr.rows.map(r => r.t), ...pr.done];
   for (const t of ts) {
     const { u, code } = tLabel(p, t); if (!u) continue;
     L.push('', `${code} · CENA ${u.numero} — ${STATUS_L[u.status].toUpperCase()}${u.stamps.length ? ' [' + u.stamps.map(k => STAMP_L[k]).join(', ') + ']' : ''}`);
-    if ((u.arquivos || '').trim()) L.push('  Arquivo: ' + u.arquivos.trim().replace(/\n/g, ', '));
+    if (arquivosText(u)) L.push('  Arquivo: ' + arquivosText(u, ', '));
     if ((u.obs || '').trim()) L.push('  Obs.: ' + u.obs.trim());
     for (const n of notesOf(u, d.id)) L.push(`  • ${hhmm(n.criadaEm)} ${n.texto || '(áudio sem transcrição)'}`);
   }

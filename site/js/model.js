@@ -1,8 +1,34 @@
-import { uid, nowIso, todayYmd, hhmmToMin, minToHHMM, DEFAULT_SCENE_MIN, VIDEO_COLORS } from './util.js';
+import { uid, nowIso, todayYmd, hhmmToMin, minToHHMM, DEFAULT_SCENE_MIN, VIDEO_COLORS, camLetter } from './util.js';
 import { excerpt } from './docx.js';
 
-export const newProject = () => ({ v: 2, id: uid(), nome: '', produtora: '', agencia: '', obs: '', videos: [], diarias: [], pessoas: [], funcoesExtras: [], midias: [], drive: {}, criadoEm: nowIso(), atualizadoEm: nowIso() });
-export const newDiaria = () => ({ id: uid(), data: todayYmd(), tipo: 'estudio', local: '', endereco: '', geo: null, call: '08:00', equipe: [], plano: [], obs: '', criadoEm: nowIso() });
+export const newProject = () => ({ v: 3, formato: { orient: 'H', res: '1920x1080', fps: '' }, id: uid(), nome: '', produtora: '', agencia: '', obs: '', videos: [], diarias: [], pessoas: [], funcoesExtras: [], midias: [], drive: {}, criadoEm: nowIso(), atualizadoEm: nowIso() });
+export const newDiaria = (data = todayYmd()) => ({ id: uid(), data, tipo: 'estudio', local: '', endereco: '', geo: null, call: '08:00', equipe: [], plano: [], obs: '', criadoEm: nowIso() });
+// A "day" groups the videos recorded on the same date (plan, call sheet, day report)
+export function ensureDay(p, ymd) {
+  ymd = ymd || todayYmd();
+  let d = p.diarias.find(x => x.data === ymd);
+  if (!d) { d = newDiaria(ymd); p.diarias.push(d); }
+  return d;
+}
+export const dayVideos = (p, d) => p.videos.filter(v => v.ficha?.data === d.data);
+export function dayInfo(p, d) {
+  const vs = dayVideos(p, d);
+  const uniq = arr => [...new Set(arr.filter(Boolean))];
+  const equipe = []; for (const v of vs) for (const e of v.ficha.equipe || []) if (!equipe.some(x => x.pessoaId === e.pessoaId && x.funcao === e.funcao)) equipe.push(e);
+  const equipamentos = []; for (const v of vs) for (const e of v.ficha.equipamentos || []) if (!equipamentos.some(x => x.cat === e.cat && x.item === e.item)) equipamentos.push(e);
+  const geoV = vs.find(v => v.ficha.geo);
+  return { tipos: uniq(vs.map(v => v.ficha.tipo)), tipo: vs[0]?.ficha.tipo || '', local: uniq(vs.map(v => v.ficha.local)).join(' / '), endereco: uniq(vs.map(v => v.ficha.endereco)).join(' / '), geo: geoV ? geoV.ficha.geo : null, equipe, equipamentos, videos: vs, obs: uniq(vs.map(v => v.ficha.obs)).join('\n') };
+}
+export const formatoOf = (p, v) => (v && v.ficha?.formato) || p.formato || null;
+export const camCount = u => Math.max(1, parseInt(u?.prep?.cameras, 10) || 1);
+// approved files as text (per camera when the scene uses more than one)
+export function arquivosText(u, sep = '\n') {
+  const n = camCount(u);
+  if (n <= 1) return (u.arquivos || '').trim().split('\n').map(s => s.trim()).filter(Boolean).join(sep);
+  const out = [];
+  for (let i = 0; i < n; i++) { const L = camLetter(i); const val = (u.arquivosCam?.[L] || (i === 0 ? u.arquivos : '') || '').trim(); if (val) out.push(`Câm ${L}: ${val.replace(/\n+/g, ', ')}`); }
+  return out.join(sep);
+}
 
 export const projName = p => [p.produtora, p.nome].filter(Boolean).join(' – ') || 'Projeto sem nome';
 export const videoName = v => [v.cab.cliente, v.cab.titulo].filter(Boolean).join(' — ') || v.arquivo || 'Vídeo sem título';
@@ -18,7 +44,7 @@ export function findUnit(p, t) {
 }
 export const findVideo = (p, id) => p.videos.find(v => v.id === id) || null;
 export const findDiaria = (p, id) => p.diarias.find(d => d.id === id) || null;
-export const hasMarks = u => u.status !== 'pendente' || (u.arquivos || '').trim() || (u.obs || '').trim() || u.notas.length || u.stamps.length;
+export const hasMarks = u => u.status !== 'pendente' || arquivosText(u) || (u.obs || '').trim() || u.notas.length || u.stamps.length || !!u.original;
 export const unitExcerpt = (p, t) => { const v = findVideo(p, t.v); const c = v && v.cenas.find(x => x.id === t.c); if (!c) return ''; if (t.s) { const s = c.subcenas.find(x => x.id === t.s); return (s && s.descricao) || excerpt(c); } return excerpt(c); };
 export function counts(v) {
   const all = units(v).filter(u => u.status !== 'fora');
@@ -46,11 +72,12 @@ export function unitsDoneIn(p, d) {
 export const sameT = (a, b) => a && b && a.v === b.v && a.c === b.c && (a.s || null) === (b.s || null);
 export const allPessoasFuncoes = p => {
   const m = new Map();
-  for (const d of p.diarias) for (const e of d.equipe) {
-    const pe = p.pessoas.find(x => x.id === e.pessoaId); if (!pe) continue;
-    const r = m.get(pe.id) || { pessoa: pe, funcoes: new Set(), dias: [] };
-    if (e.funcao) r.funcoes.add(e.funcao); r.dias.push(d); m.set(pe.id, r);
+  for (const v of p.videos) for (const e of v.ficha?.equipe || []) {
+    const pe = p.pessoas.find(x => x.id === e.pessoaId); if (!pe || !pe.nome) continue;
+    const r = m.get(pe.id) || { pessoa: pe, funcoes: new Set(), dias: [], videos: [] };
+    if (e.funcao) r.funcoes.add(e.funcao); if (v.ficha.data && !r.dias.includes(v.ficha.data)) r.dias.push(v.ficha.data); r.videos.push(v); m.set(pe.id, r);
   }
+  for (const r of m.values()) r.dias.sort();
   return [...m.values()].sort((a, b) => a.pessoa.nome.localeCompare(b.pessoa.nome));
 };
 export function allNotes(p) { const out = []; for (const v of p.videos) { out.push(...v.notas); for (const u of units(v)) out.push(...u.notas); } return out; }

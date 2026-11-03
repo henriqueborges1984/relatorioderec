@@ -75,6 +75,11 @@ export const EVENTO_L = Object.fromEntries(EVENTOS.map(e => [e[0], e[1]]));
 export const PLANOS = ['Plano geral', 'Plano aberto', 'Plano americano', 'Plano médio', 'Plano próximo', 'Primeiro plano', 'Close', 'Detalhe', 'Plongée', 'Contra-plongée', 'Câmera na mão', 'Drone', 'Lettering / arte', 'Inserto / arquivo'];
 export const VIDEO_COLORS = ['#2D5FA8', '#B5372D', '#1C7A4A', '#7A3EB1', '#A35F00', '#0F7C86', '#B0306E', '#4F6D1F', '#6B4E2E', '#3B4BA8'];
 export const DEFAULT_SCENE_MIN = 20;
+export const ORIENTACOES = [['H', 'Horizontal 16:9'], ['V', 'Vertical 9:16'], ['Q', 'Quadrado 1:1'], ['R', 'Retrato 4:5']];
+export const RESOLUCOES = { H: ['1920x1080', '3840x2160', '1280x720', '2560x1440'], V: ['1080x1920', '2160x3840', '720x1280'], Q: ['1080x1080', '2160x2160'], R: ['1080x1350', '2160x2700'] };
+export const FPS = ['23,976', '24', '25', '29,97', '30', '50', '59,94', '60'];
+export const EQUIP_CATS = ['Câmera', 'Lente', 'Luz', 'Áudio', 'Maquinaria', 'Monitoração', 'Acessório', 'Outro'];
+export const camLetter = i => String.fromCharCode(65 + i);
 
 export function toast(msg, ms = 3200) {
   const t = document.getElementById('toast'); if (!t) return;

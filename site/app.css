@@ -299,3 +299,8 @@ body.claude .micbtn,body.claude [data-act="rec-general"]{display:none}
 .badge.ia{background:var(--ok-bg);color:var(--ok)} .badge.pend{background:var(--warn-bg);color:var(--warn)}
 @media (max-width:520px){.strip{grid-template-columns:auto auto minmax(0,1fr) auto;gap:8px}.strip .tm{grid-column:2;grid-row:1}.strip .num{grid-column:2;grid-row:2;font-size:19px}.strip .grip{grid-row:1/3}.strip .info{grid-column:3;grid-row:1/3}.strip .acts{grid-column:4;grid-row:1/3;flex-direction:column}}
 @media print{.top,.dock{display:none}}
+.chg{border-left:3px solid var(--s1);padding:2px 0 2px 8px;margin:2px 0 6px;font-size:13px}
+.chg b{color:var(--s1);font-weight:600}
+details.fold.panel>summary{padding:2px 0}
+.script .hd.row{display:flex;align-items:center}
+.script .hd .iconbtn{width:28px;height:28px;color:var(--ink)}
