@@ -3,7 +3,7 @@ export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-export const cleanHtml = s => esc(s).replace(/&lt;(\/?)(p|b|i|br)&gt;/g, '<$1$2>');
+export const cleanHtml = s => esc(s).replace(/&lt;(\/?)(p|b|i|br)&gt;/g, '<$1$2>').replace(/&amp;(quot|amp|lt|gt|#39|apos|nbsp);/g, '&$1;');
 export const nowIso = () => new Date().toISOString();
 export const clone = o => JSON.parse(JSON.stringify(o));
 export const hhmm = iso => { try { return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
